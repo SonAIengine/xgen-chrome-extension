@@ -12,7 +12,7 @@ export function MarkdownRenderer({ content }: Props) {
       components={{
         pre({ children }) {
           return (
-            <pre className="bg-gray-800 text-gray-100 rounded-md p-3 my-2 overflow-x-auto text-xs">
+            <pre className="bg-gray-800 text-gray-100 rounded p-2.5 my-1.5 overflow-x-auto text-xs leading-relaxed">
               {children}
             </pre>
           );
@@ -21,7 +21,7 @@ export function MarkdownRenderer({ content }: Props) {
           const isInline = !className;
           if (isInline) {
             return (
-              <code className="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded text-xs">
+              <code className="bg-gray-100 text-gray-700 px-1 py-0.5 rounded text-xs">
                 {children}
               </code>
             );
@@ -30,8 +30,8 @@ export function MarkdownRenderer({ content }: Props) {
         },
         table({ children }) {
           return (
-            <div className="overflow-x-auto my-2">
-              <table className="min-w-full text-xs border-collapse border border-gray-300 dark:border-gray-600">
+            <div className="overflow-x-auto my-1.5">
+              <table className="min-w-full text-xs border-collapse border border-gray-200">
                 {children}
               </table>
             </div>
@@ -39,14 +39,14 @@ export function MarkdownRenderer({ content }: Props) {
         },
         th({ children }) {
           return (
-            <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 bg-gray-100 dark:bg-gray-700 text-left">
+            <th className="border border-gray-200 px-2 py-1 bg-gray-50 text-left text-gray-600 font-medium">
               {children}
             </th>
           );
         },
         td({ children }) {
           return (
-            <td className="border border-gray-300 dark:border-gray-600 px-2 py-1">
+            <td className="border border-gray-200 px-2 py-1 text-gray-700">
               {children}
             </td>
           );
