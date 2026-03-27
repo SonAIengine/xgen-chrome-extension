@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "XGEN AI Assistant",
+  "version": "0.1.0",
+  "description": "자연어로 XGEN AI 플랫폼을 제어하는 AI 어시스턴트",
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://xgen.x2bee.com/*",
+    "http://localhost:*/*",
+    "https://*.x2bee.com/*"
+  ],
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
+  "background": {
+    "service_worker": "src/background/service-worker.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://xgen.x2bee.com/*",
+        "http://localhost:*/*",
+        "https://*.x2bee.com/*"
+      ],
+      "js": ["src/content/index.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_icon": {
+      "16": "public/icons/icon-16.png",
+      "48": "public/icons/icon-48.png",
+      "128": "public/icons/icon-128.png"
+    },
+    "default_title": "XGEN AI Assistant"
+  },
+  "icons": {
+    "16": "public/icons/icon-16.png",
+    "48": "public/icons/icon-48.png",
+    "128": "public/icons/icon-128.png"
+  }
+}
