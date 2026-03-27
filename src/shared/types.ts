@@ -75,7 +75,7 @@ export type ExtensionMessage =
   | { type: 'TOOL_END'; tool: string; output: string }
   | { type: 'STREAM_DONE' }
   | { type: 'STREAM_ERROR'; error: string }
-  | { type: 'SET_TOKEN'; token: string }
+  | { type: 'SET_TOKEN'; token: string; origin: string }
   | { type: 'SET_ORIGIN'; origin: string }
   | { type: 'GET_PAGE_CONTEXT' }
   | { type: 'PAGE_CONTEXT_UPDATE'; context: PageContext }

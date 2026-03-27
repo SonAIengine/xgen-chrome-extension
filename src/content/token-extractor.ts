@@ -5,7 +5,7 @@ export function extractAndSendToken(): void {
     null;
 
   if (token) {
-    chrome.runtime.sendMessage({ type: 'SET_TOKEN', token }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'SET_TOKEN', token, origin: window.location.origin }).catch(() => {});
   }
 
   // 현재 페이지의 origin을 API base URL로 전달
@@ -22,7 +22,7 @@ export function watchTokenChanges(): void {
   // Also watch for storage changes
   window.addEventListener('storage', (e) => {
     if (e.key === 'xgen_access_token' && e.newValue) {
-      chrome.runtime.sendMessage({ type: 'SET_TOKEN', token: e.newValue }).catch(() => {});
+      chrome.runtime.sendMessage({ type: 'SET_TOKEN', token: e.newValue, origin: window.location.origin }).catch(() => {});
     }
   });
 }

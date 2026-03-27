@@ -12,9 +12,8 @@ import type {
 } from '../shared/types';
 
 // ── State ──
-
-let authToken = '';
-let serverOrigin = ''; // Content Script에서 받은 페이지 origin
+// origin별 토큰 저장 — 멀티 인스턴스 (xgen.x2bee.com / jeju-xgen.x2bee.com) 동시 사용 지원
+const tokensByOrigin: Record<string, string> = {};
 let cachedPageContext: PageContext | null = null;
 let activeAbortController: AbortController | null = null;
 
@@ -29,14 +28,20 @@ chrome.sidePanel
 chrome.runtime.onMessage.addListener(
   (message: ExtensionMessage, sender, sendResponse) => {
     switch (message.type) {
-      case 'SET_TOKEN':
-        authToken = message.token;
+      case 'SET_TOKEN': {
+        const origin = message.origin || sender.origin || '';
+        if (origin) {
+          tokensByOrigin[origin] = message.token;
+          chrome.storage.local.set({ [`token:${origin}`]: message.token });
+        }
+        // SettingsBar 호환: 마지막 토큰을 기본값으로도 저장
         chrome.storage.local.set({ [STORAGE_KEYS.AUTH_TOKEN]: message.token });
         sendResponse({ ok: true });
         break;
+      }
 
       case 'SET_ORIGIN':
-        serverOrigin = message.origin;
+        // SettingsBar UI 표시용 — API 호출에는 active tab origin 사용
         chrome.storage.local.set({ [STORAGE_KEYS.SERVER_URL]: message.origin });
         sendResponse({ ok: true });
         break;
@@ -68,19 +73,15 @@ chrome.runtime.onMessage.addListener(
   },
 );
 
-// ── Restore state on startup ──
+// ── Restore per-origin tokens on startup ──
 
-chrome.storage.local.get(
-  [STORAGE_KEYS.AUTH_TOKEN, STORAGE_KEYS.SERVER_URL],
-  (result) => {
-    if (result[STORAGE_KEYS.AUTH_TOKEN]) {
-      authToken = result[STORAGE_KEYS.AUTH_TOKEN];
+chrome.storage.local.get(null, (items) => {
+  for (const [key, value] of Object.entries(items)) {
+    if (key.startsWith('token:') && typeof value === 'string') {
+      tokensByOrigin[key.slice(6)] = value; // "token:https://xgen..." → origin
     }
-    if (result[STORAGE_KEYS.SERVER_URL]) {
-      serverOrigin = result[STORAGE_KEYS.SERVER_URL];
-    }
-  },
-);
+  }
+});
 
 // ── Core: handle user message ──
 
@@ -93,10 +94,17 @@ async function handleSendMessage(content: string) {
     STORAGE_KEYS.MODEL,
   ]);
 
-  // API base URL = 브라우저에서 열린 XGEN 페이지의 origin
-  const serverUrl = serverOrigin || (await getOriginFromTab()) || '';
+  // 항상 active tab의 origin을 서버 URL로 사용
+  const serverUrl = (await getOriginFromTab()) || '';
   if (!serverUrl) {
     broadcastToSidePanel({ type: 'STREAM_ERROR', error: 'XGEN 페이지를 먼저 열어주세요' });
+    return;
+  }
+
+  // active tab의 origin에 매칭되는 토큰 사용
+  const authToken = tokensByOrigin[serverUrl] || await getStoredToken(serverUrl);
+  if (!authToken) {
+    broadcastToSidePanel({ type: 'STREAM_ERROR', error: `${serverUrl}에 먼저 로그인해주세요` });
     return;
   }
 
@@ -184,6 +192,15 @@ async function getOriginFromTab(): Promise<string | null> {
     }
   }
   return null;
+}
+
+async function getStoredToken(origin: string): Promise<string> {
+  const result = await chrome.storage.local.get(`token:${origin}`);
+  const token = result[`token:${origin}`] || '';
+  if (token) {
+    tokensByOrigin[origin] = token; // 메모리 캐시에도 반영
+  }
+  return token;
 }
 
 async function getPageContextFromTab(): Promise<PageContext | null> {
