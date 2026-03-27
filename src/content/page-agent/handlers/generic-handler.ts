@@ -43,15 +43,13 @@ export class GenericHandler implements PageHandler {
 
   async extractContext(): Promise<PageContext> {
     const state = await this.controller.getBrowserState();
-    console.log('[XGEN GenericHandler] extractContext — elements length:', state.content?.length ?? 0, 'url:', state.url);
-    if (!state.content) {
-      console.warn('[XGEN GenericHandler] getBrowserState().content가 비어있음!');
-    }
+    // 컨텍스트 추출 후 하이라이트 제거 — 평상시에는 깨끗한 화면 유지
+    await this.controller.cleanUpHighlights();
     return {
       pageType: detectPageType(new URL(window.location.href)),
       url: state.url,
       title: state.title,
-      elements: state.content,  // LLM이 읽는 DOM 평탄화 텍스트
+      elements: state.content,
       data: {},
       availableActions: this.getAvailableActions(),
       timestamp: Date.now(),
@@ -67,6 +65,9 @@ export class GenericHandler implements PageHandler {
     params: Record<string, unknown>,
   ): Promise<PageCommandResult> {
     try {
+      // 액션 실행 전 하이라이트 표시 — 어떤 요소를 조작하는지 시각적 피드백
+      await this.controller.updateTree();
+
       switch (action) {
         case 'click_element':
           await this.controller.clickElement(params.index as number);
@@ -97,8 +98,10 @@ export class GenericHandler implements PageHandler {
           return { success: false, action, error: `Unknown action: ${action}` };
       }
 
-      // 액션 실행 후 DOM 재스캔 — 다음 턴에 fresh context 제공
+      // 액션 실행 후 잠시 대기 (DOM 반영) → 재스캔 → 하이라이트 정리
+      await new Promise((r) => setTimeout(r, 300));
       const state = await this.controller.getBrowserState();
+      await this.controller.cleanUpHighlights();
       const updatedContext: PageContext = {
         pageType: detectPageType(new URL(window.location.href)),
         url: state.url,
