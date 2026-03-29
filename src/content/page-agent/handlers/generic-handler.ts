@@ -92,6 +92,9 @@ export class GenericHandler implements PageHandler {
           });
           break;
 
+        case 'navigate_plan':
+          return await this.executeNavigatePlan(params.steps as string[]);
+
         default:
           return { success: false, action, error: `Unknown action: ${action}` };
       }
@@ -304,6 +307,98 @@ export class GenericHandler implements PageHandler {
     return menuEntries.length > 0
       ? '[메뉴 구조]\n' + menuEntries.join('\n')
       : null;
+  }
+
+  /**
+   * Plan-Execute 네비게이션 — 텍스트 매칭으로 메뉴를 순서대로 클릭한다.
+   *
+   * LLM이 ["지식관리", "지식컬렉션"] 같은 계획을 세우면,
+   * 코드가 각 텍스트에 매칭되는 DOM 요소를 찾아 순서대로 클릭한다.
+   * LLM 추가 호출 없이 멀티스텝 네비게이션을 완료한다.
+   */
+  private async executeNavigatePlan(steps: string[]): Promise<PageCommandResult> {
+    if (!steps || steps.length === 0) {
+      return { success: false, action: 'navigate_plan', error: 'No steps provided' };
+    }
+
+    const executedSteps: string[] = [];
+
+    for (const stepText of steps) {
+      // 1. DOM을 재스캔하여 현재 페이지의 요소를 파악
+      await this.controller.getBrowserState();
+
+      // 2. 텍스트에 매칭되는 클릭 가능한 요소 찾기
+      const element = this.findClickableByText(stepText);
+      if (!element) {
+        await this.controller.cleanUpHighlights();
+        return {
+          success: false,
+          action: 'navigate_plan',
+          error: `"${stepText}" 요소를 찾을 수 없습니다. 완료된 스텝: [${executedSteps.join(' → ')}]`,
+        };
+      }
+
+      // 3. 클릭
+      element.click();
+      executedSteps.push(stepText);
+
+      // 4. DOM 안정화 대기
+      await this.waitForDomStability();
+    }
+
+    // 최종 상태 반환
+    const state = await this.controller.getBrowserState();
+    await this.controller.cleanUpHighlights();
+
+    return {
+      success: true,
+      action: 'navigate_plan',
+      pageContext: {
+        pageType: detectPageType(new URL(window.location.href)),
+        url: state.url,
+        title: state.title,
+        elements: state.content,
+        data: {},
+        availableActions: this.getAvailableActions(),
+        timestamp: Date.now(),
+      },
+    };
+  }
+
+  /**
+   * 텍스트로 클릭 가능한 DOM 요소를 찾는다.
+   * 정확한 매칭 → 부분 매칭 → 포함 매칭 순으로 시도한다.
+   */
+  private findClickableByText(targetText: string): HTMLElement | null {
+    const target = targetText.trim().toLowerCase();
+
+    // 클릭 가능한 요소 후보
+    const candidates = document.querySelectorAll<HTMLElement>(
+      'a, button, [role="button"], [role="menuitem"], [role="tab"], [role="link"]',
+    );
+
+    // 1차: 정확한 텍스트 매칭
+    for (const el of candidates) {
+      const text = el.textContent?.trim().toLowerCase() ?? '';
+      if (text === target) return el;
+    }
+
+    // 2차: 시작 매칭 (앞부분 일치)
+    for (const el of candidates) {
+      const text = el.textContent?.trim().toLowerCase() ?? '';
+      if (text.startsWith(target) || target.startsWith(text)) return el;
+    }
+
+    // 3차: 포함 매칭
+    for (const el of candidates) {
+      const text = el.textContent?.trim().toLowerCase() ?? '';
+      if (text.includes(target) || target.includes(text)) {
+        // 너무 긴 텍스트는 부모 요소일 가능성 → 스킵
+        if (text.length < target.length * 3) return el;
+      }
+    }
+
+    return null;
   }
 
   /**
