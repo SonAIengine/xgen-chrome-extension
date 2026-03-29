@@ -83,6 +83,10 @@ chrome.runtime.onMessage.addListener(
             data: { ...cachedPageContext.data, canvasState: message.result },
           };
         }
+        // 백엔드 에이전트 루프에 결과 전달
+        if (message.requestId) {
+          postCommandResultToBackend(message.requestId, message.result);
+        }
         sendResponse({ ok: true });
         break;
     }
@@ -179,7 +183,7 @@ async function handleSSEEvent(event: SSEEvent) {
     case 'canvas_command':
       await sendToContentScript({
         type: 'CANVAS_COMMAND',
-        requestId: crypto.randomUUID(),
+        requestId: (event as any).requestId || crypto.randomUUID(),
         action: event.action,
         params: event.params,
       });
