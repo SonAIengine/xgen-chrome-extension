@@ -550,19 +550,32 @@ async function handleApiHookAction(
         }
 
         // 인증 프로필 자동 매칭: api_url 도메인과 일치하는 auth profile 찾기
+        // _fromPicker: Element Picker에서 직접 호출 시 true (fallback 허용)
+        const fromPicker = !!(toolData._fromPicker);
+
         let authProfileId = toolData.auth_profile_id as string | undefined;
         if (!authProfileId) {
           authProfileId = await autoMatchAuthProfile(serverUrl, authToken, toolData.api_url as string) || undefined;
         }
 
-        // auth profile 없으면 캡처된 인증 헤더를 api_header에 직접 포함
+        // auth profile 없고 인증 필요한 API → 경로에 따라 다르게 처리
         let apiHeader = (toolData.api_header as Record<string, string>) || {};
         if (!authProfileId) {
           try {
             const apiDomain = new URL(toolData.api_url as string).hostname;
             const capturedAuth = findCapturedAuthForDomain(apiDomain);
             if (capturedAuth) {
-              apiHeader = { ...apiHeader, [capturedAuth.key]: capturedAuth.value };
+              if (fromPicker) {
+                // Element Picker: 캡처된 헤더로 바로 등록
+                apiHeader = { ...apiHeader, [capturedAuth.key]: capturedAuth.value };
+              } else {
+                // AI 에이전트: 로그인 유도
+                return {
+                  success: false,
+                  action,
+                  error: `이 API는 인증이 필요하지만 로그인 요청이 캡처되지 않았습니다. 사용자에게 해당 사이트 로그인을 요청한 후 다시 register_tool을 호출하세요. (start_api_hook이 활성 상태여야 로그인 요청이 캡처됩니다)`,
+                };
+              }
             }
           } catch {}
         }
