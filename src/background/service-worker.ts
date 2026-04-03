@@ -552,15 +552,19 @@ async function handleApiHookAction(
         // 인증 프로필 자동 매칭: api_url 도메인과 일치하는 auth profile 찾기
         let authProfileId = toolData.auth_profile_id as string | undefined;
         if (!authProfileId) {
-          const matchResult = await autoMatchAuthProfile(serverUrl, authToken, toolData.api_url as string);
-          if (matchResult === 'LOGIN_REQUIRED') {
-            return {
-              success: false,
-              action,
-              error: `이 API는 인증이 필요합니다. 해당 사이트에서 로그인한 후 다시 시도해주세요. API hook이 로그인 요청을 캡처하면 자동으로 인증 프로필이 생성됩니다.`,
-            };
-          }
-          authProfileId = matchResult || undefined;
+          authProfileId = await autoMatchAuthProfile(serverUrl, authToken, toolData.api_url as string) || undefined;
+        }
+
+        // auth profile 없으면 캡처된 인증 헤더를 api_header에 직접 포함
+        let apiHeader = (toolData.api_header as Record<string, string>) || {};
+        if (!authProfileId) {
+          try {
+            const apiDomain = new URL(toolData.api_url as string).hostname;
+            const capturedAuth = findCapturedAuthForDomain(apiDomain);
+            if (capturedAuth) {
+              apiHeader = { ...apiHeader, [capturedAuth.key]: capturedAuth.value };
+            }
+          } catch {}
         }
 
         // tool 저장 요청
@@ -572,7 +576,7 @@ async function handleApiHookAction(
             description: (toolData.description as string) || '',
             api_url: toolData.api_url as string,
             api_method: (toolData.api_method as string) || 'GET',
-            api_header: (toolData.api_header as Record<string, string>) || {},
+            api_header: apiHeader,
             api_body: (toolData.api_body as Record<string, unknown>) || {},
             static_body: (toolData.static_body as Record<string, unknown>) || {},
             body_type: (toolData.body_type as string) || 'application/json',
@@ -680,8 +684,15 @@ async function autoMatchAuthProfile(
 
     const capturedLogin = findCapturedLoginForDomain(apiDomain);
     if (!capturedLogin) {
-      // 로그인 요청이 캡처되지 않음 → 'LOGIN_REQUIRED' 반환하여 AI가 로그인 유도
-      return 'LOGIN_REQUIRED';
+      // 로그인 요청이 캡처되지 않음
+      // 인증 헤더가 있으면 api_header에 직접 포함하여 등록 가능 (auth profile 없이)
+      const capturedAuth = findCapturedAuthForDomain(apiDomain);
+      if (capturedAuth) {
+        // 인증 헤더는 있지만 로그인 캡처 없음 → auth profile 없이 진행 (undefined 반환)
+        return undefined;
+      }
+      // 인증 헤더도 없음 → 등록 가능 (인증 불필요한 API)
+      return undefined;
     }
 
     const profileData = buildAuthProfileFromLogin(serviceId, apiDomain, capturedLogin);
