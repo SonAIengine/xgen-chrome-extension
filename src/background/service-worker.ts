@@ -552,23 +552,15 @@ async function handleApiHookAction(
         // 인증 프로필 자동 매칭: api_url 도메인과 일치하는 auth profile 찾기
         let authProfileId = toolData.auth_profile_id as string | undefined;
         if (!authProfileId) {
-          authProfileId = await autoMatchAuthProfile(serverUrl, authToken, toolData.api_url as string) || undefined;
-        }
-
-        // auth profile 없는데 인증 필요한 API → 로그인 유도
-        if (!authProfileId) {
-          try {
-            const apiDomain = new URL(toolData.api_url as string).hostname;
-            const capturedAuth = findCapturedAuthForDomain(apiDomain);
-            if (capturedAuth) {
-              // 인증 헤더 있지만 로그인 미캡처 → 로그인 필요
-              return {
-                success: false,
-                action,
-                error: `이 API는 인증이 필요합니다. 해당 사이트에서 로그인해주세요. API hook이 활성 상태에서 로그인하면 자동으로 인증 프로필이 생성됩니다. 로그인 후 다시 등록을 시도해주세요.`,
-              };
-            }
-          } catch {}
+          const matchResult = await autoMatchAuthProfile(serverUrl, authToken, toolData.api_url as string);
+          if (matchResult === 'LOGIN_REQUIRED') {
+            return {
+              success: false,
+              action,
+              error: `이 API는 인증이 필요합니다. 해당 사이트에서 로그인해주세요. API hook이 활성 상태에서 로그인하면 자동으로 인증 프로필이 생성됩니다. 로그인 후 다시 등록을 시도해주세요.`,
+            };
+          }
+          authProfileId = matchResult || undefined;
         }
 
         // tool 저장 요청
