@@ -27,7 +27,7 @@ export function injectCursorOverride(): void {
       left: 0;
       width: 24px;
       height: 24px;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cdefs%3E%3Cfilter id='s' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeDropShadow dx='0.5' dy='1' stdDeviation='0.8' flood-color='%23000' flood-opacity='0.25'/%3E%3C/filter%3E%3C/defs%3E%3Cpath d='M 3 2 L 3 18 L 7.5 13.5 L 12 20 L 14 19 L 9.5 12.5 L 15 12 Z' fill='white' stroke='%23222' stroke-width='1.2' stroke-linejoin='round' filter='url(%23s)'/%3E%3C/svg%3E");
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cdefs%3E%3Cfilter id='s' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeDropShadow dx='0.5' dy='1' stdDeviation='0.8' flood-color='%23000' flood-opacity='0.15'/%3E%3C/filter%3E%3C/defs%3E%3Cpath d='M 3 2 L 3 18 L 7.5 13.5 L 12 20 L 14 19 L 9.5 12.5 L 15 12 Z' fill='white' stroke='%23888' stroke-width='1.2' stroke-linejoin='round' filter='url(%23s)'/%3E%3C/svg%3E");
       background-size: contain;
       background-repeat: no-repeat;
       pointer-events: none;
@@ -44,15 +44,15 @@ export function injectCursorOverride(): void {
       border: 2px solid rgba(59, 130, 246, 0.6) !important;
     }
 
-    /* 오버레이 래퍼 — 배경/상호작용 차단 제거 */
+    /* 오버레이 래퍼 — 연한 그레이 반투명 배경 */
     ._wrapper_1ooyb_1 {
-      background: none !important;
+      background: rgba(120, 120, 130, 0.08) !important;
       cursor: default !important;
       pointer-events: none !important;
     }
 
     ._wrapper_1ooyb_1._visible_1ooyb_11 {
-      background: none !important;
+      background: rgba(120, 120, 130, 0.08) !important;
     }
   `;
   document.head.appendChild(style);
