@@ -606,8 +606,7 @@ async function handleApiHookAction(
 // ── Auth Profile 자동 매칭 ──
 
 /**
- * api_url의 도메인과 일치하는 auth profile을 자동으로 찾는다.
- * Session Station의 auth-profiles 목록을 조회하여 service_id 또는 name에 도메인이 포함된 프로필을 반환.
+ * api_url의 도메인과 일치하는 auth profile을 찾거나, 없으면 캡처된 인증 헤더로 자동 생성.
  */
 async function autoMatchAuthProfile(
   serverUrl: string,
@@ -616,49 +615,153 @@ async function autoMatchAuthProfile(
 ): Promise<string | undefined> {
   try {
     let apiDomain: string;
+    let apiOrigin: string;
     try {
-      apiDomain = new URL(apiUrl).hostname;
+      const u = new URL(apiUrl);
+      apiDomain = u.hostname;
+      apiOrigin = u.origin;
     } catch {
       return undefined;
     }
 
-    // localhost는 개발 환경이므로 스킵
-    if (apiDomain === 'localhost') {
-      return undefined;
-    }
+    if (apiDomain === 'localhost') return undefined;
 
+    // 1) 기존 프로필에서 도메인 매칭
     const resp = await fetch(`${serverUrl}/api/session-station/v1/auth-profiles`, {
       headers: { Authorization: `Bearer ${authToken}` },
     });
 
-    if (!resp.ok) return undefined;
+    if (resp.ok) {
+      const profiles = await resp.json() as Array<{
+        service_id: string;
+        name: string;
+        status: string;
+      }>;
 
-    const profiles = await resp.json() as Array<{
-      service_id: string;
-      name: string;
-      status: string;
-    }>;
+      const domainParts = apiDomain.replace('www.', '').split('.');
+      const domainKey = domainParts[0];
 
-    // 도메인 매칭: service_id 또는 name에 api 도메인 키워드가 포함된 프로필
-    const domainParts = apiDomain.replace('www.', '').split('.');
-    const domainKey = domainParts[0]; // e.g., "naver" from "naver.com"
+      const matched = profiles.find((p) =>
+        p.status === 'active' && (
+          p.service_id.toLowerCase().includes(domainKey) ||
+          p.name.toLowerCase().includes(domainKey)
+        )
+      );
 
-    const matched = profiles.find((p) =>
-      p.status === 'active' && (
-        p.service_id.toLowerCase().includes(domainKey) ||
-        p.name.toLowerCase().includes(domainKey)
-      )
-    );
-
-    if (matched) {
-      console.log(`[XGEN SW] Auto-matched auth profile: ${matched.service_id} for ${apiDomain}`);
-      return matched.service_id;
+      if (matched) {
+        console.log(`[XGEN SW] Auto-matched auth profile: ${matched.service_id} for ${apiDomain}`);
+        return matched.service_id;
+      }
     }
 
+    // 2) 매칭 실패 → 캡처된 API에서 인증 헤더를 가져와 auth profile 자동 생성
+    const capturedAuth = findCapturedAuthForDomain(apiDomain);
+    if (!capturedAuth) return undefined;
+
+    const serviceId = apiDomain.replace('www.', '').replace(/\./g, '_');
+    const profileData = buildAuthProfileFromCaptured(serviceId, apiDomain, apiOrigin, capturedAuth);
+
+    const createResp = await fetch(`${serverUrl}/api/session-station/v1/auth-profiles`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify(profileData),
+    });
+
+    if (createResp.ok) {
+      console.log(`[XGEN SW] Auto-created auth profile: ${serviceId} for ${apiDomain}`);
+      return serviceId;
+    }
+
+    // 409 (already exists) — 이미 있으면 그 service_id 반환
+    if (createResp.status === 409) {
+      return serviceId;
+    }
+
+    const err = await createResp.text();
+    console.warn(`[XGEN SW] Failed to create auth profile: ${createResp.status} ${err}`);
     return undefined;
-  } catch {
+  } catch (e) {
+    console.warn('[XGEN SW] autoMatchAuthProfile error:', e);
     return undefined;
   }
+}
+
+/**
+ * 캡처된 API 데이터에서 특정 도메인의 인증 헤더를 찾는다.
+ */
+function findCapturedAuthForDomain(domain: string): { type: string; key: string; value: string } | null {
+  for (const [, apis] of capturedApisByTab) {
+    for (const api of apis) {
+      try {
+        if (!new URL(api.url).hostname.includes(domain.replace('www.', ''))) continue;
+      } catch { continue; }
+
+      for (const [key, value] of Object.entries(api.requestHeaders)) {
+        const k = key.toLowerCase();
+        if (k === 'authorization' && value.toLowerCase().startsWith('bearer ')) {
+          return { type: 'bearer', key: 'Authorization', value };
+        }
+        if (k === 'authorization' && value.toLowerCase().startsWith('basic ')) {
+          return { type: 'basic', key: 'Authorization', value };
+        }
+        if (k === 'x-api-key') {
+          return { type: 'api_key', key: 'X-API-Key', value };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 캡처된 인증 정보로 auth profile 생성 데이터를 구성한다.
+ * login_config는 플레이스홀더 — 사용자가 나중에 실제 로그인 URL/자격증명을 설정해야 자동 갱신 가능.
+ * 우선은 캡처된 토큰을 fixed 값으로 injection하여 즉시 사용 가능하게 한다.
+ */
+function buildAuthProfileFromCaptured(
+  serviceId: string,
+  domain: string,
+  origin: string,
+  auth: { type: string; key: string; value: string },
+) {
+  // 토큰 값 추출 (예: "Bearer xxx" → "xxx")
+  const tokenValue = auth.value.includes(' ') ? auth.value.split(' ').slice(1).join(' ') : auth.value;
+  const prefix = auth.value.includes(' ') ? auth.value.split(' ')[0] + ' ' : '';
+
+  return {
+    service_id: serviceId,
+    name: `${domain} (자동 생성)`,
+    description: `Element Picker에서 자동 생성된 인증 프로필. 로그인 자동 갱신을 위해 login_config를 업데이트하세요.`,
+    auth_type: auth.type,
+    login_config: {
+      url: `${origin}/api/auth/login`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      payload: {},
+      timeout: 30,
+    },
+    extraction_rules: [
+      {
+        name: 'access_token',
+        source: 'fixed',
+        value: tokenValue,
+      },
+    ],
+    injection_rules: [
+      {
+        source_field: 'access_token',
+        target: 'header',
+        key: auth.key,
+        value_template: `${prefix}{access_token}`,
+        required: true,
+      },
+    ],
+    ttl: 3600,
+    refresh_before_expire: 300,
+  };
 }
 
 // ── Element Picker: hook inject ──
