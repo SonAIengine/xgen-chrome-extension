@@ -160,23 +160,24 @@ export function useChat() {
   return { messages, isStreaming, pageContext, sendMessage, stopStream, clearMessages };
 }
 
-/** 최근 대화 요약 빌드 (최대 6턴, 토큰 절약) */
+/** 최근 대화 요약 빌드 (최대 3턴, 토큰 절약) */
 function buildSummary(messages: ChatMessage[]): string {
   if (messages.length === 0) return '';
-  const recent = messages.slice(-12); // 최대 6쌍
+  const recent = messages.slice(-6); // 최대 3쌍
   const lines = recent
     .map((m) => {
-      if (m.role === 'user') return `사용자: ${m.content.slice(0, 100)}`;
+      if (m.role === 'user') return `사용자: ${m.content.slice(0, 60)}`;
       if (m.role === 'assistant') {
         const tools =
           m.toolCalls
-            ?.map((t) => `${t.tool}(${t.input.slice(0, 50)})`)
+            ?.map((t) => t.tool)
             .join(', ') || '';
-        const text = m.content.slice(0, 100);
-        return `AI: ${text}${tools ? ` [도구: ${tools}]` : ''}`;
+        const text = m.content.slice(0, 60);
+        return `AI: ${text}${tools ? ` [${tools}]` : ''}`;
       }
       return '';
     })
     .filter(Boolean);
-  return lines.join('\n');
+  const summary = lines.join('\n');
+  return summary.slice(0, 500);
 }
