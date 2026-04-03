@@ -66,8 +66,8 @@ export function useElementPicker() {
         const isAuthError = result.error?.includes('인증이 필요');
         if (isAuthError) {
           // 인증 필요 → AI에게 내부적으로 로그인 유도 메시지 전송 (채팅에 안 보임)
-          setRegistered('loading');
-          setRegisterError('로그인이 필요합니다');
+          setRegistered('error');
+          setRegisterError('로그인 필요 — 채팅에서 안내를 따라주세요');
           chrome.runtime.sendMessage({
             type: 'SEND_MESSAGE',
             content:
