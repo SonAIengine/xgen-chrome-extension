@@ -48,7 +48,21 @@ export function useElementPicker(chatSendMessage?: (content: string) => void) {
     const toolName = pathname.split('/').filter(Boolean).join('_') || 'api_tool';
     const description = `${api.method} ${pathname}`;
 
-    const message = `다음 API를 XGEN 실행도구에 등록해줘. register_tool을 호출해서 등록하고 결과를 알려줘.\n- function_name: ${toolName}\n- api_url: ${api.url}\n- api_method: ${api.method}\n- description: ${description}\n- body_type: ${api.contentType || 'application/json'}${api.requestBody ? `\n- request body 예시: ${api.requestBody.slice(0, 300)}` : ''}`;
+    // 인증 관련 헤더 추출
+    const authHeaders: Record<string, string> = {};
+    if (api.requestHeaders) {
+      for (const [key, value] of Object.entries(api.requestHeaders)) {
+        const k = key.toLowerCase();
+        if (k === 'authorization' || k === 'cookie' || k === 'x-api-key' || k === 'x-auth-token') {
+          authHeaders[key] = value;
+        }
+      }
+    }
+    const headerStr = Object.keys(authHeaders).length > 0
+      ? `\n- api_header: ${JSON.stringify(authHeaders)}`
+      : '';
+
+    const message = `다음 API를 XGEN 실행도구에 등록해줘. register_tool을 호출해서 등록하고 결과를 알려줘.\n- function_name: ${toolName}\n- api_url: ${api.url}\n- api_method: ${api.method}\n- description: ${description}\n- body_type: ${api.contentType || 'application/json'}${headerStr}${api.requestBody ? `\n- api_body 예시: ${api.requestBody.slice(0, 300)}` : ''}`;
 
     if (chatSendMessage) {
       chatSendMessage(message);
