@@ -557,6 +557,8 @@ async function handleApiHookAction(
             response_filter_field: (toolData.response_filter_field as string) || '',
             status: 'active',
             metadata: (toolData.metadata as Record<string, unknown>) || {},
+            // auth_profile_id: Session Station 인증 프로필 연동
+            ...(toolData.auth_profile_id ? { auth_profile_id: toolData.auth_profile_id as string } : {}),
           },
         };
 

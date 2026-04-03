@@ -62,7 +62,7 @@ export function useElementPicker(chatSendMessage?: (content: string) => void) {
       ? `\n- api_header: ${JSON.stringify(authHeaders)}`
       : '';
 
-    const message = `다음 API를 XGEN 실행도구에 등록해줘. register_tool을 호출해서 등록하고 결과를 알려줘.\n- function_name: ${toolName}\n- api_url: ${api.url}\n- api_method: ${api.method}\n- description: ${description}\n- body_type: ${api.contentType || 'application/json'}${headerStr}${api.requestBody ? `\n- api_body 예시: ${api.requestBody.slice(0, 300)}` : ''}`;
+    const message = `다음 API를 XGEN 실행도구에 등록해줘. register_tool을 호출해서 등록하고 결과를 알려줘.\n- function_name: ${toolName}\n- api_url: ${api.url}\n- api_method: ${api.method}\n- description: ${description}\n- body_type: ${api.contentType || 'application/json'}${headerStr}${api.requestBody ? `\n- api_body 예시: ${api.requestBody.slice(0, 300)}` : ''}\n\n인증이 필요한 API라면 auth_profile_id를 설정해서 Session Station으로 토큰을 자동 관리할 수 있어. 사용자에게 auth profile을 연결할지 물어봐줘.`;
 
     if (chatSendMessage) {
       chatSendMessage(message);
