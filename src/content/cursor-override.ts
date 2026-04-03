@@ -46,14 +46,13 @@ export function injectCursorOverride(): void {
       transition: transform 0.1s ease;
     }
 
-    /* ai-motion WebGL 테두리 효과 제거 */
-    ._wrapper_1ooyb_1 canvas,
-    ._wrapper_1ooyb_1 > *:not(._cursor_1dgwb_2) {
-      display: none !important;
-      visibility: hidden !important;
+    /* ai-motion WebGL 테두리 → 그레이 그라데이션 오버라이드 */
+    ._wrapper_1ooyb_1 canvas {
+      opacity: 0.4 !important;
+      filter: saturate(0) brightness(0.7) !important;
     }
 
-    /* 오버레이 래퍼 — 배경 없음 */
+    /* 오버레이 래퍼 — 배경 없음, 테두리만 표시 */
     ._wrapper_1ooyb_1,
     ._wrapper_1ooyb_1._visible_1ooyb_11 {
       background: none !important;
