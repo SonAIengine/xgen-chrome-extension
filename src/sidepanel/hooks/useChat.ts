@@ -160,10 +160,10 @@ export function useChat() {
   return { messages, isStreaming, pageContext, sendMessage, stopStream, clearMessages };
 }
 
-/** 최근 대화 요약 빌드 (최대 3턴, 토큰 절약) */
+/** 최근 대화 요약 빌드 (최대 2턴, 토큰 절약) */
 function buildSummary(messages: ChatMessage[]): string {
   if (messages.length === 0) return '';
-  const recent = messages.slice(-6); // 최대 3쌍
+  const recent = messages.slice(-4); // 최대 2쌍
   const lines = recent
     .map((m) => {
       if (m.role === 'user') return `사용자: ${m.content.slice(0, 60)}`;
