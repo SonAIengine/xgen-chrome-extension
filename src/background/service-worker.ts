@@ -768,22 +768,26 @@ function findCapturedLoginForDomain(domain: string): CapturedLogin | null {
         try { responseBody = JSON.parse(api.responseBody); } catch { continue; }
       }
 
-      // 토큰 필드 찾기: access_token, token, jwt, id_token 등
-      const tokenFieldNames = ['access_token', 'token', 'accessToken', 'jwt', 'id_token', 'auth_token', 'session_token'];
+      // 토큰 필드 찾기
+      const tokenFieldNames = ['access_token', 'accessToken', 'token', 'jwt', 'id_token', 'auth_token', 'session_token'];
       const tokenFields: { name: string; keyPath: string }[] = [];
+      const foundNames = new Set<string>();
 
+      // 1단계: 루트 레벨
       for (const fieldName of tokenFieldNames) {
         if (responseBody[fieldName] && typeof responseBody[fieldName] === 'string') {
           tokenFields.push({ name: fieldName, keyPath: fieldName });
+          foundNames.add(fieldName);
         }
       }
 
-      // 중첩 구조 탐색 (data.access_token, result.token 등)
+      // 2단계: 중첩 구조 (payload.accessToken, data.token 등)
       for (const [topKey, topVal] of Object.entries(responseBody)) {
         if (typeof topVal === 'object' && topVal !== null) {
           for (const fieldName of tokenFieldNames) {
-            if ((topVal as any)[fieldName] && typeof (topVal as any)[fieldName] === 'string') {
+            if (!foundNames.has(fieldName) && (topVal as any)[fieldName] && typeof (topVal as any)[fieldName] === 'string') {
               tokenFields.push({ name: fieldName, keyPath: `${topKey}.${fieldName}` });
+              foundNames.add(fieldName);
             }
           }
         }
