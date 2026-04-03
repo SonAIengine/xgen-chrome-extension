@@ -48,11 +48,14 @@ export function App() {
               chrome.runtime.sendMessage({
                 type: 'SEND_MESSAGE',
                 content:
-                  '현재 사이트의 인증 프로필을 생성해야 해. ' +
-                  'API hook을 시작하고, 이 사이트의 로그인 페이지로 이동해서 사용자에게 로그인을 요청해줘. ' +
-                  '이미 로그인된 상태면 로그아웃 먼저 하고. ' +
-                  '사용자가 로그인하면 캡처된 로그인 정보로 인증 프로필이 자동 생성돼. ' +
-                  '로그인 완료 확인 후 get_captured_apis로 로그인 API가 캡처됐는지 확인하고, 결과를 알려줘.',
+                  '현재 사이트의 인증 프로필을 생성해줘. 다음 단계만 수행하고 멈춰:\n' +
+                  '1. start_api_hook 실행\n' +
+                  '2. 이미 로그인된 상태면 로그아웃\n' +
+                  '3. 로그인 페이지로 이동\n' +
+                  '4. 사용자에게 "로그인해주세요"라고 안내\n' +
+                  '5. 사용자가 로그인했다고 하면 stop_api_hook 실행\n' +
+                  '6. "인증 프로필이 생성되었습니다"라고 알려줘\n' +
+                  '이 외에 다른 작업(API 탐색, 도구 등록 등)은 절대 하지 마.',
               } satisfies ExtensionMessage).catch(() => {});
               setTimeout(() => setAuthCapturing(false), 3000);
             }}
