@@ -252,6 +252,7 @@ export class GenericHandler implements PageHandler {
     const menuEntries: string[] = [];
     let currentParent: string | null = null;
     let currentChildren: string[] = [];
+    let currentExpanded = false;
 
     for (const btn of allButtons) {
       const cls = btn.className || '';
@@ -271,10 +272,34 @@ export class GenericHandler implements PageHandler {
       if (isToggle) {
         // 이전 부모의 자식들을 저장
         if (currentParent && currentChildren.length > 0) {
-          menuEntries.push(`${currentParent} > [${currentChildren.join(', ')}]`);
+          const state = currentExpanded ? '펼침' : '접힘';
+          menuEntries.push(`${currentParent} (${state}) > [${currentChildren.join(', ')}]`);
         }
         currentParent = text;
         currentChildren = [];
+
+        // 펼침/접힘 상태 감지
+        // 1) aria-expanded 속성
+        // 2) 다음 형제(서브메뉴 컨테이너)의 display/height 확인
+        // 3) 부모의 class에 "open", "active", "expanded" 포함 여부
+        const ariaExpanded = btn.getAttribute('aria-expanded');
+        if (ariaExpanded !== null) {
+          currentExpanded = ariaExpanded === 'true';
+        } else {
+          // 서브메뉴 컨테이너의 가시성으로 판단
+          const nextSibling = btn.nextElementSibling as HTMLElement | null;
+          const parentLi = btn.closest('li') || btn.parentElement;
+          const subContainer = nextSibling || parentLi?.querySelector('ul, div[class*="sub"], div[class*="nav"]');
+
+          if (subContainer) {
+            const style = window.getComputedStyle(subContainer);
+            currentExpanded = style.display !== 'none' && style.height !== '0px' && style.visibility !== 'hidden';
+          } else {
+            // class 기반 판단
+            const parentCls = (btn.parentElement?.className || '') + ' ' + cls;
+            currentExpanded = /\b(open|active|expanded)\b/i.test(parentCls);
+          }
+        }
       } else if (isNavItem && currentParent) {
         currentChildren.push(text);
       }
@@ -282,7 +307,8 @@ export class GenericHandler implements PageHandler {
 
     // 마지막 그룹 저장
     if (currentParent && currentChildren.length > 0) {
-      menuEntries.push(`${currentParent} > [${currentChildren.join(', ')}]`);
+      const state = currentExpanded ? '펼침' : '접힘';
+      menuEntries.push(`${currentParent} (${state}) > [${currentChildren.join(', ')}]`);
     }
 
     return menuEntries.length > 0
