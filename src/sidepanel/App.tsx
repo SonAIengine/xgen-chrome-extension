@@ -3,10 +3,11 @@ import { useChat } from './hooks/useChat';
 import { ChatMessage } from './components/ChatMessage';
 import { InputArea } from './components/InputArea';
 import { SettingsBar } from './components/SettingsBar';
-import { ElementPickerButton } from './components/ElementPickerButton';
+import { useElementPicker, PickerResultPanel } from './components/ElementPickerButton';
 
 export function App() {
   const { messages, isStreaming, sendMessage, stopStream, clearMessages } = useChat();
+  const picker = useElementPicker();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -15,22 +16,52 @@ export function App() {
 
   return (
     <div className="flex flex-col h-screen bg-white text-gray-800">
-      {/* Header */}
-      <header className="flex items-center justify-end px-3 py-2 border-b border-gray-200">
-        <button
-          onClick={clearMessages}
-          className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
-          title="대화 초기화"
-        >
-          초기화
-        </button>
-      </header>
+      {/* Toolbar — 한 줄 */}
+      <div className="border-b border-gray-200">
+        <div className="flex items-center px-2 py-1 gap-1">
+          {/* Element Picker 아이콘 */}
+          <button
+            onClick={picker.togglePicker}
+            className={`p-1 rounded transition-colors ${
+              picker.picking
+                ? 'text-violet-600 bg-violet-100'
+                : 'text-gray-400 hover:text-gray-600'
+            }`}
+            title={picker.picking ? '요소 선택 취소 (Esc)' : 'API 캡처 — 요소 선택'}
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="22" y1="12" x2="18" y2="12" />
+              <line x1="6" y1="12" x2="2" y2="12" />
+              <line x1="12" y1="6" x2="12" y2="2" />
+              <line x1="12" y1="22" x2="12" y2="18" />
+            </svg>
+          </button>
 
-      {/* Settings */}
-      <SettingsBar />
+          {/* Settings 아이콘 */}
+          <SettingsBar />
 
-      {/* Element Picker */}
-      <ElementPickerButton />
+          <div className="flex-1" />
+
+          <button
+            onClick={clearMessages}
+            className="text-[11px] text-gray-400 hover:text-gray-600 px-1.5 py-0.5 transition-colors"
+            title="대화 초기화"
+          >
+            초기화
+          </button>
+        </div>
+      </div>
+
+      {/* Picker 결과 패널 (있을 때만) */}
+      {picker.result && (
+        <PickerResultPanel
+          result={picker.result}
+          registered={picker.registered}
+          registerApi={picker.registerApi}
+          closeResult={picker.closeResult}
+        />
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-3">

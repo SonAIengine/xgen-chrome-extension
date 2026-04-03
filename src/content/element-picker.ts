@@ -3,9 +3,9 @@
  *
  * 활성화하면 페이지 위에 호버 하이라이트 오버레이가 표시되고,
  * 사용자가 요소를 클릭하면:
- * 1. API hook 시작
+ * 1. API hook 시작 (ELEMENT_PICKER_STOP → SW가 hook inject)
  * 2. 해당 요소 클릭 실행
- * 3. 잠시 대기 후 캡처된 API 수집
+ * 3. 2초 대기 후 캡처된 API 수집
  * 4. 결과를 service worker로 전달
  */
 
@@ -14,6 +14,8 @@ let highlightOverlay: HTMLDivElement | null = null;
 let labelOverlay: HTMLDivElement | null = null;
 
 function createOverlays() {
+  if (highlightOverlay) return; // 이미 생성됨
+
   highlightOverlay = document.createElement('div');
   highlightOverlay.id = 'xgen-picker-highlight';
   Object.assign(highlightOverlay.style, {
@@ -53,11 +55,17 @@ function removeOverlays() {
   labelOverlay = null;
 }
 
+function isPickerElement(el: Element | null): boolean {
+  if (!el) return false;
+  const id = (el as HTMLElement).id;
+  return id === 'xgen-picker-highlight' || id === 'xgen-picker-label';
+}
+
 function handleMouseMove(e: MouseEvent) {
   if (!pickerActive || !highlightOverlay || !labelOverlay) return;
 
   const target = e.target as HTMLElement;
-  if (!target || target.id === 'xgen-picker-highlight' || target.id === 'xgen-picker-label') return;
+  if (!target || isPickerElement(target)) return;
 
   const rect = target.getBoundingClientRect();
 
@@ -83,47 +91,54 @@ function handleMouseMove(e: MouseEvent) {
 async function handleClick(e: MouseEvent) {
   if (!pickerActive) return;
 
+  const target = e.target as HTMLElement;
+  if (!target || isPickerElement(target)) return;
+
   e.preventDefault();
   e.stopPropagation();
   e.stopImmediatePropagation();
 
-  const target = e.target as HTMLElement;
-  if (!target || target.id === 'xgen-picker-highlight' || target.id === 'xgen-picker-label') return;
-
-  // picker 비활성화
-  stopPicker();
+  // picker UI 즉시 정리
+  cleanup();
 
   const tag = target.tagName.toLowerCase();
   const text = (target.textContent || '').trim().slice(0, 50);
   const url = window.location.href;
 
-  // 1. API hook 시작 요청
+  // 1. SW에 hook inject 요청 (ELEMENT_PICKER_STOP이 hook 시작 트리거)
   chrome.runtime.sendMessage({ type: 'ELEMENT_PICKER_STOP' }).catch(() => {});
 
-  // 잠시 대기 후 hook이 준비되면 클릭
-  // service worker가 hook inject → 여기서 요소 클릭 → API 캡처
-  // hook inject는 비동기이므로 약간의 딜레이 필요
+  // hook inject 대기
   await new Promise(r => setTimeout(r, 500));
 
-  // 2. 요소 클릭 실행 (실제 이벤트)
+  // 2. 요소 클릭 실행
   target.click();
 
   // 3. API 응답 대기
   await new Promise(r => setTimeout(r, 2000));
 
-  // 4. 캡처된 API 조회 요청 → service worker가 ELEMENT_PICKER_RESULT로 응답
+  // 4. 캡처된 API 조회 → SW가 ELEMENT_PICKER_RESULT를 sidepanel에 전달
   chrome.runtime.sendMessage({
     type: 'ELEMENT_PICKER_RESULT',
-    apis: [], // service worker가 채워줌
+    apis: [],
     elementInfo: { tag, text, url },
   }).catch(() => {});
 }
 
 function handleKeyDown(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    stopPicker();
+  if (e.key === 'Escape' && pickerActive) {
+    cleanup();
     chrome.runtime.sendMessage({ type: 'ELEMENT_PICKER_STOP' }).catch(() => {});
   }
+}
+
+function cleanup() {
+  pickerActive = false;
+  document.removeEventListener('mousemove', handleMouseMove, true);
+  document.removeEventListener('click', handleClick, true);
+  document.removeEventListener('keydown', handleKeyDown, true);
+  document.body.style.cursor = '';
+  removeOverlays();
 }
 
 export function startPicker() {
@@ -138,12 +153,5 @@ export function startPicker() {
 }
 
 export function stopPicker() {
-  if (!pickerActive) return;
-  pickerActive = false;
-
-  document.removeEventListener('mousemove', handleMouseMove, true);
-  document.removeEventListener('click', handleClick, true);
-  document.removeEventListener('keydown', handleKeyDown, true);
-  document.body.style.cursor = '';
-  removeOverlays();
+  cleanup();
 }
