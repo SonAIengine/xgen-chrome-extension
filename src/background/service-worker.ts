@@ -659,7 +659,7 @@ async function autoMatchAuthProfile(
     if (!capturedAuth) return undefined;
 
     const serviceId = apiDomain.replace('www.', '').replace(/\./g, '_');
-    const profileData = buildAuthProfileFromCaptured(serviceId, apiDomain, apiOrigin, capturedAuth);
+    const profileData = buildAuthProfileFromCaptured(serviceId, apiDomain, serverUrl, capturedAuth);
 
     const createResp = await fetch(`${serverUrl}/api/session-station/v1/auth-profiles`, {
       method: 'POST',
@@ -724,7 +724,7 @@ function findCapturedAuthForDomain(domain: string): { type: string; key: string;
 function buildAuthProfileFromCaptured(
   serviceId: string,
   domain: string,
-  origin: string,
+  serverUrl: string,
   auth: { type: string; key: string; value: string },
 ) {
   // 토큰 값 추출 (예: "Bearer xxx" → "xxx")
@@ -737,11 +737,12 @@ function buildAuthProfileFromCaptured(
     description: `Element Picker에서 자동 생성된 인증 프로필. 로그인 자동 갱신을 위해 login_config를 업데이트하세요.`,
     auth_type: auth.type,
     login_config: {
-      url: `${origin}/api/auth/login`,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      // health 엔드포인트로 200 응답 보장 — fixed extraction은 응답 내용 무관
+      url: `${serverUrl}/api/session-station/v1/health`,
+      method: 'GET',
+      headers: {},
       payload: {},
-      timeout: 30,
+      timeout: 10,
     },
     extraction_rules: [
       {
