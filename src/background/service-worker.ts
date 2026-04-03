@@ -536,6 +536,12 @@ async function handleApiHookAction(
           return { success: false, action, error: `Not logged in to ${serverUrl}` };
         }
 
+        // 인증 프로필 자동 매칭: api_url 도메인과 일치하는 auth profile 찾기
+        let authProfileId = toolData.auth_profile_id as string | undefined;
+        if (!authProfileId) {
+          authProfileId = await autoMatchAuthProfile(serverUrl, authToken, toolData.api_url as string);
+        }
+
         // tool 저장 요청
         const savePayload = {
           function_name: toolData.function_name as string,
@@ -557,8 +563,7 @@ async function handleApiHookAction(
             response_filter_field: (toolData.response_filter_field as string) || '',
             status: 'active',
             metadata: (toolData.metadata as Record<string, unknown>) || {},
-            // auth_profile_id: Session Station 인증 프로필 연동
-            ...(toolData.auth_profile_id ? { auth_profile_id: toolData.auth_profile_id as string } : {}),
+            ...(authProfileId ? { auth_profile_id: authProfileId } : {}),
           },
         };
 
@@ -576,10 +581,13 @@ async function handleApiHookAction(
           return { success: false, action, error: result.detail || `HTTP ${response.status}` };
         }
 
+        const authInfo = authProfileId
+          ? ` (auth_profile: ${authProfileId})`
+          : '';
         return {
           success: true,
           action,
-          result: `Tool "${toolData.function_name}" registered successfully to ${serverUrl}`,
+          result: `Tool "${toolData.function_name}" registered successfully to ${serverUrl}${authInfo}`,
         };
       }
 
@@ -592,6 +600,64 @@ async function handleApiHookAction(
       action,
       error: err instanceof Error ? err.message : String(err),
     };
+  }
+}
+
+// ── Auth Profile 자동 매칭 ──
+
+/**
+ * api_url의 도메인과 일치하는 auth profile을 자동으로 찾는다.
+ * Session Station의 auth-profiles 목록을 조회하여 service_id 또는 name에 도메인이 포함된 프로필을 반환.
+ */
+async function autoMatchAuthProfile(
+  serverUrl: string,
+  authToken: string,
+  apiUrl: string,
+): Promise<string | undefined> {
+  try {
+    let apiDomain: string;
+    try {
+      apiDomain = new URL(apiUrl).hostname;
+    } catch {
+      return undefined;
+    }
+
+    // XGEN 자체 API면 별도 인증 불필요 (이미 XGEN 토큰 사용)
+    if (apiDomain.includes('x2bee.com') || apiDomain === 'localhost') {
+      return undefined;
+    }
+
+    const resp = await fetch(`${serverUrl}/api/session-station/v1/auth-profiles`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+
+    if (!resp.ok) return undefined;
+
+    const profiles = await resp.json() as Array<{
+      service_id: string;
+      name: string;
+      status: string;
+    }>;
+
+    // 도메인 매칭: service_id 또는 name에 api 도메인 키워드가 포함된 프로필
+    const domainParts = apiDomain.replace('www.', '').split('.');
+    const domainKey = domainParts[0]; // e.g., "naver" from "naver.com"
+
+    const matched = profiles.find((p) =>
+      p.status === 'active' && (
+        p.service_id.toLowerCase().includes(domainKey) ||
+        p.name.toLowerCase().includes(domainKey)
+      )
+    );
+
+    if (matched) {
+      console.log(`[XGEN SW] Auto-matched auth profile: ${matched.service_id} for ${apiDomain}`);
+      return matched.service_id;
+    }
+
+    return undefined;
+  } catch {
+    return undefined;
   }
 }
 
