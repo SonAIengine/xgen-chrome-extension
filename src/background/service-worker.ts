@@ -119,6 +119,39 @@ chrome.runtime.onMessage.addListener(
         sendResponse({ ok: true });
         break;
       }
+
+      // ── Element Picker ──
+      case 'ELEMENT_PICKER_START':
+        sendToContentScript({ type: 'ELEMENT_PICKER_START' } as ExtensionMessage);
+        sendResponse({ ok: true });
+        break;
+
+      case 'ELEMENT_PICKER_STOP': {
+        // picker가 요소를 선택함 → hook 시작 (클릭 전에 hook이 준비되어야 함)
+        const tabId3 = sender.tab?.id;
+        if (tabId3) {
+          handlePickerHookInject(tabId3).then(() => sendResponse({ ok: true }));
+          return true;
+        }
+        sendResponse({ ok: true });
+        break;
+      }
+
+      case 'ELEMENT_PICKER_RESULT': {
+        // content script에서 요소 클릭 후 2초 대기 후 호출됨
+        const tabId4 = sender.tab?.id || 0;
+        const captured2 = capturedApisByTab.get(tabId4) || [];
+        const elementInfo = (message as any).elementInfo;
+
+        // 캡처된 API를 sidepanel에 전달
+        broadcastToSidePanel({
+          type: 'ELEMENT_PICKER_RESULT',
+          apis: captured2,
+          elementInfo,
+        } as ExtensionMessage);
+        sendResponse({ ok: true });
+        break;
+      }
     }
 
     return false;
@@ -557,6 +590,26 @@ async function handleApiHookAction(
       action,
       error: err instanceof Error ? err.message : String(err),
     };
+  }
+}
+
+// ── Element Picker: hook inject ──
+async function handlePickerHookInject(tabId: number) {
+  if (!hookedTabs.has(tabId)) {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: apiHookRelayFunction,
+      world: 'ISOLATED' as any,
+    }).catch(() => {});
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: mainWorldHookFunction,
+      world: 'MAIN' as any,
+    }).catch(() => {});
+    hookedTabs.add(tabId);
+    capturedApisByTab.set(tabId, []);
+  } else {
+    capturedApisByTab.set(tabId, []);
   }
 }
 

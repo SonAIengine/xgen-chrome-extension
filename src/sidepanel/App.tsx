@@ -3,6 +3,7 @@ import { useChat } from './hooks/useChat';
 import { ChatMessage } from './components/ChatMessage';
 import { InputArea } from './components/InputArea';
 import { SettingsBar } from './components/SettingsBar';
+import { ElementPickerButton } from './components/ElementPickerButton';
 
 export function App() {
   const { messages, isStreaming, sendMessage, stopStream, clearMessages } = useChat();
@@ -30,6 +31,9 @@ export function App() {
 
       {/* Settings */}
       <SettingsBar />
+
+      {/* Element Picker */}
+      <ElementPickerButton />
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-3">

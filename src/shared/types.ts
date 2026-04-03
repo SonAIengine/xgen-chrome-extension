@@ -98,4 +98,8 @@ export type ExtensionMessage =
   | { type: 'CANVAS_COMMAND'; requestId: string; action: string; params: Record<string, unknown> }
   | { type: 'CANVAS_RESULT'; requestId: string; result: unknown }
   // ── API Hook (content script → service worker) ──
-  | { type: 'API_CAPTURED'; data: import('./api-hook-types').CapturedApi };
+  | { type: 'API_CAPTURED'; data: import('./api-hook-types').CapturedApi }
+  // ── Element Picker ──
+  | { type: 'ELEMENT_PICKER_START' }
+  | { type: 'ELEMENT_PICKER_STOP' }
+  | { type: 'ELEMENT_PICKER_RESULT'; apis: import('./api-hook-types').CapturedApi[]; elementInfo: { tag: string; text: string; url: string } };
