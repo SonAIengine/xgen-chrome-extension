@@ -7,7 +7,7 @@ import { useElementPicker, PickerResultPanel } from './components/ElementPickerB
 
 export function App() {
   const { messages, isStreaming, sendMessage, stopStream, clearMessages } = useChat();
-  const picker = useElementPicker();
+  const picker = useElementPicker(sendMessage);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

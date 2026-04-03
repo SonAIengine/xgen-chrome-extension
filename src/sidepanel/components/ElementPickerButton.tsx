@@ -7,7 +7,7 @@ interface PickerResult {
   elementInfo: { tag: string; text: string; url: string };
 }
 
-export function useElementPicker() {
+export function useElementPicker(chatSendMessage?: (content: string) => void) {
   const [picking, setPicking] = useState(false);
   const [result, setResult] = useState<PickerResult | null>(null);
   const [registered, setRegistered] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
@@ -63,8 +63,21 @@ export function useElementPicker() {
       } satisfies ExtensionMessage);
 
       if (result && result.success === false) {
-        setRegistered('error');
-        setRegisterError(result.error || '등록 실패');
+        const isAuthError = result.error?.includes('인증이 필요');
+        if (isAuthError && chatSendMessage) {
+          // 인증 필요 → AI에게 로그인 유도 흐름 자동 시작
+          setRegistered('loading');
+          setRegisterError('로그인 필요 — AI가 안내합니다');
+          chatSendMessage(
+            `방금 등록하려는 API(${api.url})에 인증이 필요해. ` +
+            `API hook을 시작하고, 이 사이트의 로그인 페이지로 이동해서 사용자에게 로그인을 요청해줘. ` +
+            `이미 로그인된 상태면 로그아웃 먼저 하고. ` +
+            `사용자가 로그인하면 캡처된 정보로 인증 프로필이 자동 생성되니까, 그 후에 다시 이 API를 register_tool로 등록해줘.`
+          );
+        } else {
+          setRegistered('error');
+          setRegisterError(result.error || '등록 실패');
+        }
       } else {
         setRegistered('done');
       }
