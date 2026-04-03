@@ -49,7 +49,7 @@ export function useElementPicker() {
     setRegisterError('');
 
     try {
-      const response = await chrome.runtime.sendMessage({
+      const result = await chrome.runtime.sendMessage({
         type: 'PAGE_COMMAND',
         requestId: crypto.randomUUID(),
         action: 'register_tool',
@@ -62,9 +62,12 @@ export function useElementPicker() {
         },
       } satisfies ExtensionMessage);
 
-      // PAGE_COMMAND_RESULT는 비동기로 올 수 있으므로 약간 대기
-      await new Promise(r => setTimeout(r, 2000));
-      setRegistered('done');
+      if (result && result.success === false) {
+        setRegistered('error');
+        setRegisterError(result.error || '등록 실패');
+      } else {
+        setRegistered('done');
+      }
     } catch (err) {
       setRegistered('error');
       setRegisterError(err instanceof Error ? err.message : 'Unknown error');
