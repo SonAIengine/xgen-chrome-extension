@@ -31,7 +31,7 @@ export function SettingsBar() {
         setServerUrl(savedUrl);
 
         if (savedUrl) {
-          fetchProviders(savedUrl, result[STORAGE_KEYS.AUTH_TOKEN] || '', savedModel);
+          fetchProviders(savedUrl, result[STORAGE_KEYS.AUTH_TOKEN] || '');
         }
       },
     );
@@ -52,7 +52,7 @@ export function SettingsBar() {
     return () => chrome.storage.local.onChanged.removeListener(listener);
   }, []);
 
-  const fetchProviders = useCallback(async (url: string, token: string, currentModel?: string) => {
+  const fetchProviders = useCallback(async (url: string, token: string) => {
     setLoading(true);
     try {
       const resp = await fetch(`${url}${API_PROVIDERS_ENDPOINT}`, {
@@ -62,23 +62,14 @@ export function SettingsBar() {
         const data = await resp.json();
         const list: ProviderInfo[] = data.providers || [];
         setProviders(list);
-
-        // Auto-select only if model is truly empty (not set by user)
-        const modelToCheck = currentModel ?? model;
-        if (!modelToCheck) {
-          const current = list.find((p) => p.provider === provider && p.available);
-          if (current?.default_model) {
-            setModel(current.default_model);
-            chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: current.default_model });
-          }
-        }
+        // 모델 auto-select 하지 않음 — 사용자가 provider 변경할 때만 model 변경
       }
     } catch {
       // Server not reachable
     } finally {
       setLoading(false);
     }
-  }, [provider, model]);
+  }, []);
 
   const handleProviderChange = useCallback((newProvider: string) => {
     setProvider(newProvider);
