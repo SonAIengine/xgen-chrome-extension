@@ -180,13 +180,17 @@ async function handleSendMessage(content: string, summary?: string) {
   };
 
   try {
-    for await (const event of streamChat(serverUrl, authToken, request)) {
+    for await (const event of streamChat(serverUrl, authToken, request, activeAbortController.signal)) {
       if (activeAbortController?.signal.aborted) break;
       await handleSSEEvent(event);
     }
 
     broadcastToSidePanel({ type: 'STREAM_DONE' });
   } catch (err) {
+    // abort된 경우 에러 무시 (STOP_STREAM에서 이미 STREAM_DONE 전송)
+    if (err instanceof DOMException && err.name === 'AbortError') return;
+    if (activeAbortController?.signal.aborted) return;
+
     const msg = err instanceof Error ? err.message : 'Unknown error';
     const error = `${msg}\n(서버: ${serverUrl}/api/ai-chat/stream)`;
     broadcastToSidePanel({ type: 'STREAM_ERROR', error });

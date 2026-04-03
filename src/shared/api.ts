@@ -29,6 +29,7 @@ export async function* streamChat(
   serverUrl: string,
   token: string,
   request: AiChatRequest,
+  signal?: AbortSignal,
 ): AsyncGenerator<SSEEvent> {
   const url = `${serverUrl}${API_CHAT_ENDPOINT}`;
 
@@ -39,6 +40,7 @@ export async function* streamChat(
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(request),
+    signal,
   });
 
   if (!response.ok) {
