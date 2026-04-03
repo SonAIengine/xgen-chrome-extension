@@ -59,7 +59,6 @@ export function useElementPicker() {
           api_method: api.method,
           description,
           body_type: api.contentType || 'application/json',
-          _fromPicker: true,
         },
       } satisfies ExtensionMessage);
 
