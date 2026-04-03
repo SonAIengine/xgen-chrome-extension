@@ -18,6 +18,7 @@ import { apiHookRelayFunction } from '../content/api-hook/relay';
 // origin별 토큰 저장 — 멀티 인스턴스 (xgen.x2bee.com / jeju-xgen.x2bee.com) 동시 사용 지원
 const tokensByOrigin: Record<string, string> = {};
 let cachedPageContext: PageContext | null = null;
+let cachedPageContextTabId: number | null = null;
 let activeAbortController: AbortController | null = null;
 
 // ── API Hook State ──
@@ -66,6 +67,7 @@ chrome.runtime.onMessage.addListener(
 
       case 'PAGE_CONTEXT_UPDATE':
         cachedPageContext = message.context;
+        cachedPageContextTabId = sender.tab?.id ?? null;
         broadcastToSidePanel({ type: 'PAGE_CONTEXT_UPDATE', context: message.context });
         sendResponse({ ok: true });
         break;
@@ -293,19 +295,27 @@ async function getStoredToken(origin: string): Promise<string> {
 }
 
 async function getPageContextFromTab(): Promise<PageContext | null> {
-  if (cachedPageContext && Date.now() - cachedPageContext.timestamp < 2000) {
-    return cachedPageContext;
-  }
-
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tabs.length === 0 || !tabs[0].id) return null;
 
+  const activeTabId = tabs[0].id;
+
+  // 캐시: 같은 탭 + 2초 이내일 때만 사용
+  if (
+    cachedPageContext &&
+    cachedPageContextTabId === activeTabId &&
+    Date.now() - cachedPageContext.timestamp < 2000
+  ) {
+    return cachedPageContext;
+  }
+
   try {
-    const response = await chrome.tabs.sendMessage(tabs[0].id, {
+    const response = await chrome.tabs.sendMessage(activeTabId, {
       type: 'GET_PAGE_CONTEXT',
     });
     if (response) {
       cachedPageContext = response;
+      cachedPageContextTabId = activeTabId;
     }
     return response;
   } catch {
