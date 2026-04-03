@@ -552,7 +552,15 @@ async function handleApiHookAction(
         // 인증 프로필 자동 매칭: api_url 도메인과 일치하는 auth profile 찾기
         let authProfileId = toolData.auth_profile_id as string | undefined;
         if (!authProfileId) {
-          authProfileId = await autoMatchAuthProfile(serverUrl, authToken, toolData.api_url as string);
+          const matchResult = await autoMatchAuthProfile(serverUrl, authToken, toolData.api_url as string);
+          if (matchResult === 'LOGIN_REQUIRED') {
+            return {
+              success: false,
+              action,
+              error: `이 API는 인증이 필요합니다. 해당 사이트에서 로그인한 후 다시 시도해주세요. API hook이 로그인 요청을 캡처하면 자동으로 인증 프로필이 생성됩니다.`,
+            };
+          }
+          authProfileId = matchResult || undefined;
         }
 
         // tool 저장 요청
@@ -667,19 +675,16 @@ async function autoMatchAuthProfile(
       }
     }
 
-    // 2) 매칭 실패 → 캡처된 로그인 요청 또는 인증 헤더로 auth profile 자동 생성
+    // 2) 매칭 실패 → 캡처된 로그인 요청으로 auth profile 자동 생성
     const serviceId = apiDomain.replace('www.', '').replace(/\./g, '_');
 
-    // 먼저 캡처된 로그인 요청 찾기 (자동 갱신 가능)
     const capturedLogin = findCapturedLoginForDomain(apiDomain);
-    // 로그인이 없으면 인증 헤더로 fallback (fixed 토큰)
-    const capturedAuth = capturedLogin ? null : findCapturedAuthForDomain(apiDomain);
+    if (!capturedLogin) {
+      // 로그인 요청이 캡처되지 않음 → 'LOGIN_REQUIRED' 반환하여 AI가 로그인 유도
+      return 'LOGIN_REQUIRED';
+    }
 
-    if (!capturedLogin && !capturedAuth) return undefined;
-
-    const profileData = capturedLogin
-      ? buildAuthProfileFromLogin(serviceId, apiDomain, capturedLogin)
-      : buildAuthProfileFromCaptured(serviceId, apiDomain, serverUrl, capturedAuth!);
+    const profileData = buildAuthProfileFromLogin(serviceId, apiDomain, capturedLogin);
 
     const createResp = await fetch(`${serverUrl}/api/session-station/v1/auth-profiles`, {
       method: 'POST',
