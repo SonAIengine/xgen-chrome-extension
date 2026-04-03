@@ -140,12 +140,14 @@ chrome.runtime.onMessage.addListener(
         break;
 
       case 'ELEMENT_PICKER_STOP': {
-        // picker가 요소를 선택함 → hook 시작 (클릭 전에 hook이 준비되어야 함)
         const tabId3 = sender.tab?.id;
         if (tabId3) {
+          // content script에서 보낸 경우 (요소 클릭 후) → hook inject
           handlePickerHookInject(tabId3).then(() => sendResponse({ ok: true }));
           return true;
         }
+        // sidepanel에서 보낸 경우 (취소 버튼) → content script에 stop 전달
+        sendToContentScript({ type: 'ELEMENT_PICKER_STOP' } as ExtensionMessage);
         sendResponse({ ok: true });
         break;
       }

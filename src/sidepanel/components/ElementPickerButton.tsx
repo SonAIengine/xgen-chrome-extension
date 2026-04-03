@@ -68,6 +68,8 @@ export function useElementPicker() {
         if (!hasAuth) {
           setRegisterError('인증 프로필 없이 등록됨 — 인증 필요 시 로그인 후 재등록 필요');
         }
+        // 1초 후 자동 닫기
+        setTimeout(() => { setResult(null); setRegistered('idle'); setRegisterError(''); }, 1000);
       } else if (result && result.success === false) {
         const isAuthError = result.error?.includes('인증이 필요');
         if (isAuthError) {
