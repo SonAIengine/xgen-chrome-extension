@@ -622,8 +622,8 @@ async function autoMatchAuthProfile(
       return undefined;
     }
 
-    // XGEN 자체 API면 별도 인증 불필요 (이미 XGEN 토큰 사용)
-    if (apiDomain.includes('x2bee.com') || apiDomain === 'localhost') {
+    // localhost는 개발 환경이므로 스킵
+    if (apiDomain === 'localhost') {
       return undefined;
     }
 
