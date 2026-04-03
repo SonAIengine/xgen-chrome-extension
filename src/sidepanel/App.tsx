@@ -1,13 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useChat } from './hooks/useChat';
 import { ChatMessage } from './components/ChatMessage';
 import { InputArea } from './components/InputArea';
 import { SettingsBar } from './components/SettingsBar';
 import { useElementPicker, PickerResultPanel } from './components/ElementPickerButton';
+import type { ExtensionMessage } from '../shared/types';
 
 export function App() {
   const { messages, isStreaming, sendMessage, stopStream, clearMessages } = useChat();
   const picker = useElementPicker();
+  const [authCapturing, setAuthCapturing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -35,6 +37,37 @@ export function App() {
               <line x1="6" y1="12" x2="2" y2="12" />
               <line x1="12" y1="6" x2="12" y2="2" />
               <line x1="12" y1="22" x2="12" y2="18" />
+            </svg>
+          </button>
+
+          {/* 인증 프로필 생성 */}
+          <button
+            onClick={() => {
+              setAuthCapturing(true);
+              // AI에게 내부적으로 로그인 유도 메시지 전송
+              chrome.runtime.sendMessage({
+                type: 'SEND_MESSAGE',
+                content:
+                  '현재 사이트의 인증 프로필을 생성해야 해. ' +
+                  'API hook을 시작하고, 이 사이트의 로그인 페이지로 이동해서 사용자에게 로그인을 요청해줘. ' +
+                  '이미 로그인된 상태면 로그아웃 먼저 하고. ' +
+                  '사용자가 로그인하면 캡처된 로그인 정보로 인증 프로필이 자동 생성돼. ' +
+                  '로그인 완료 확인 후 get_captured_apis로 로그인 API가 캡처됐는지 확인하고, 결과를 알려줘.',
+              } satisfies ExtensionMessage).catch(() => {});
+              setTimeout(() => setAuthCapturing(false), 3000);
+            }}
+            disabled={authCapturing}
+            className={`p-1 rounded transition-colors ${
+              authCapturing
+                ? 'text-green-600 bg-green-100'
+                : 'text-gray-400 hover:text-gray-600'
+            }`}
+            title="인증 프로필 생성 — 로그인 캡처"
+          >
+            {/* Lock/key icon */}
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
           </button>
 
