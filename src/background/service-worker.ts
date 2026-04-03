@@ -554,3 +554,48 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   hookedTabs.delete(tabId);
   capturedApisByTab.delete(tabId);
 });
+
+// ── 페이지 네비게이션 감지: 후킹된 탭에서 페이지 이동 시 자동 재주입 + 기록 ──
+chrome.webNavigation.onCompleted.addListener(async (details) => {
+  // 메인 프레임만 (iframe 무시)
+  if (details.frameId !== 0) return;
+  const tabId = details.tabId;
+
+  if (!hookedTabs.has(tabId)) return;
+
+  // 네비게이션 기록을 캡처 데이터에 추가
+  if (!capturedApisByTab.has(tabId)) {
+    capturedApisByTab.set(tabId, []);
+  }
+  capturedApisByTab.get(tabId)!.push({
+    id: crypto.randomUUID(),
+    tabId,
+    timestamp: Date.now(),
+    url: details.url,
+    method: 'NAVIGATION',
+    requestHeaders: {},
+    requestBody: null,
+    responseStatus: 200,
+    responseHeaders: {},
+    responseBody: null,
+    contentType: '',
+    duration: 0,
+  } as CapturedApi);
+
+  // hook 자동 재주입 (페이지 이동으로 이전 hook 소멸)
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: apiHookRelayFunction,
+      world: 'ISOLATED' as any,
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: mainWorldHookFunction,
+      world: 'MAIN' as any,
+    });
+    console.log(`[XGEN SW] API hook re-injected after navigation: ${details.url}`);
+  } catch (err) {
+    console.warn('[XGEN SW] Failed to re-inject hook:', err);
+  }
+});
