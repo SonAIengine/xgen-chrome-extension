@@ -4,11 +4,14 @@ import { ChatMessage } from './components/ChatMessage';
 import { InputArea } from './components/InputArea';
 import { SettingsBar } from './components/SettingsBar';
 import { useElementPicker, PickerResultPanel } from './components/ElementPickerButton';
+import { useWorkflowGathering } from './hooks/useWorkflowGathering';
+import { WorkflowGatheringProgress, WorkflowResultPanel } from './components/WorkflowGatheringPanel';
 import type { ExtensionMessage } from '../shared/types';
 
 export function App() {
-  const { messages, isStreaming, sendMessage, stopStream, clearMessages } = useChat();
+  const { messages, isStreaming, sendMessage, stopStream, clearMessages, addUserMessage } = useChat();
   const picker = useElementPicker();
+  const gathering = useWorkflowGathering({ addUserMessage, messages });
   const [authCapturing, setAuthCapturing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -74,6 +77,26 @@ export function App() {
             </svg>
           </button>
 
+          {/* 워크플로우 생성 */}
+          <button
+            onClick={gathering.start}
+            disabled={gathering.context.active}
+            className={`p-1 rounded transition-colors ${
+              gathering.context.active
+                ? 'text-blue-600 bg-blue-100'
+                : 'text-gray-400 hover:text-gray-600'
+            }`}
+            title="워크플로우 생성 — 대화형 요구사항 수집"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="16 3 21 3 21 8" />
+              <line x1="4" y1="20" x2="21" y2="3" />
+              <polyline points="21 16 21 21 16 21" />
+              <line x1="15" y1="15" x2="21" y2="21" />
+              <line x1="4" y1="4" x2="9" y2="9" />
+            </svg>
+          </button>
+
           {/* Settings 아이콘 */}
           <SettingsBar />
 
@@ -100,6 +123,16 @@ export function App() {
         />
       )}
 
+      {/* 워크플로우 수집 진행 바 */}
+      {gathering.context.active && (
+        <WorkflowGatheringProgress context={gathering.context} onCancel={gathering.cancel} />
+      )}
+
+      {/* 워크플로우 결과 패널 */}
+      {gathering.result && (
+        <WorkflowResultPanel spec={gathering.result} onClose={gathering.clearResult} />
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {messages.length === 0 && (
@@ -119,7 +152,11 @@ export function App() {
       </div>
 
       {/* Input */}
-      <InputArea onSend={sendMessage} onStop={stopStream} isStreaming={isStreaming} />
+      <InputArea
+        onSend={gathering.context.active ? gathering.sendMessage : sendMessage}
+        onStop={stopStream}
+        isStreaming={isStreaming}
+      />
     </div>
   );
 }

@@ -157,7 +157,21 @@ export function useChat() {
     setIsStreaming(false);
   }, []);
 
-  return { messages, isStreaming, pageContext, sendMessage, stopStream, clearMessages };
+  /** UI에만 사용자 메시지 추가 (백엔드 전송 없이). gathering 모드용. */
+  const addUserMessage = useCallback((content: string) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        role: 'user' as const,
+        content: content.trim(),
+        timestamp: Date.now(),
+      },
+    ]);
+    setIsStreaming(true);
+  }, []);
+
+  return { messages, isStreaming, pageContext, sendMessage, stopStream, clearMessages, addUserMessage };
 }
 
 /** 최근 대화 요약 빌드 (최대 2턴, 토큰 절약) */
