@@ -207,7 +207,15 @@ export function PickerResultPanel({ result, registered, registerError, registerA
   registerApi: (api: CapturedApi) => void;
   closeResult: () => void;
 }) {
-  const filteredApis = result.apis.filter(a => a.method !== 'NAVIGATION');
+  // 중복 URL 제거 (같은 URL+method는 하나만)
+  const seen = new Set<string>();
+  const filteredApis = result.apis.filter(a => {
+    if (a.method === 'NAVIGATION') return false;
+    const key = `${a.method}:${a.url}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   return (
     <div className="border-b border-gray-200 bg-gray-50 px-3 py-2">
@@ -243,20 +251,34 @@ export function PickerResultPanel({ result, registered, registerError, registerA
               감지된 기능이 없습니다.
             </p>
           ) : (
-            <div className="space-y-1 max-h-40 overflow-y-auto">
-              {filteredApis.map((api) => (
-                <div key={api.id} className="flex items-center gap-1.5 text-[11px]">
-                  <span className="text-gray-700 truncate flex-1">
-                    {describeApi(api.url, api.method)}
-                  </span>
-                  <button
-                    onClick={() => registerApi(api)}
-                    className="px-2 py-0.5 bg-violet-500 text-white rounded hover:bg-violet-600 text-[10px] flex-none"
-                  >
-                    도구로 등록
-                  </button>
-                </div>
-              ))}
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {filteredApis.map((api) => {
+                let shortPath: string;
+                try {
+                  const u = new URL(api.url);
+                  const segs = u.pathname.split('/').filter(Boolean);
+                  shortPath = '/' + segs.slice(-2).join('/');
+                } catch { shortPath = api.url.slice(-30); }
+
+                return (
+                  <div key={api.id} className="flex items-center gap-1.5">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] text-gray-700 truncate">
+                        {describeApi(api.url, api.method)}
+                      </div>
+                      <div className="text-[9px] text-gray-400 font-mono truncate">
+                        {api.method} {shortPath}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => registerApi(api)}
+                      className="px-2 py-1 bg-violet-500 text-white rounded hover:bg-violet-600 text-[10px] flex-none"
+                    >
+                      등록
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </>
