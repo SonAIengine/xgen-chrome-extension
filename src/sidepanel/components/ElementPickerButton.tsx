@@ -128,6 +128,78 @@ export function ElementPickerButton() {
   );
 }
 
+/** URL 경로에서 사람이 읽기 쉬운 한국어 기능명 생성 */
+function describeApi(url: string, method: string): string {
+  let pathname: string;
+  try { pathname = new URL(url).pathname; } catch { pathname = url; }
+
+  // 경로 키워드 → 한국어 매핑
+  const keywords: Record<string, string> = {
+    basket: '장바구니', cart: '장바구니', order: '주문', checkout: '결제',
+    search: '검색', goods: '상품', product: '상품', item: '상품',
+    member: '회원', user: '사용자', profile: '프로필', account: '계정',
+    login: '로그인', auth: '인증', register: '회원가입', signup: '가입',
+    category: '카테고리', menu: '메뉴', navigation: '메뉴',
+    review: '리뷰', comment: '댓글', board: '게시판', notice: '공지',
+    coupon: '쿠폰', point: '포인트', event: '이벤트', promotion: '프로모션',
+    delivery: '배송', shipping: '배송', address: '주소',
+    payment: '결제', pay: '결제', refund: '환불',
+    wish: '찜', favorite: '즐겨찾기', like: '좋아요',
+    list: '목록', detail: '상세', info: '정보',
+    recent: '최근', history: '이력', log: '기록',
+    setting: '설정', config: '설정', preference: '환경설정',
+    notification: '알림', message: '메시지',
+    image: '이미지', file: '파일', upload: '업로드', download: '다운로드',
+    stock: '재고', inventory: '재고', price: '가격',
+    store: '매장', shop: '매장', brand: '브랜드',
+  };
+
+  const parts = pathname.toLowerCase().split('/').filter(Boolean);
+
+  // 매칭된 키워드 수집
+  const matched: string[] = [];
+  for (const part of parts) {
+    for (const [key, label] of Object.entries(keywords)) {
+      if (part.includes(key) && !matched.includes(label)) {
+        matched.push(label);
+      }
+    }
+  }
+
+  // 메서드 동사
+  const verb = method === 'GET' ? '조회' : method === 'POST' ? '요청' : method === 'PUT' ? '수정' : method === 'DELETE' ? '삭제' : '호출';
+
+  if (matched.length > 0) {
+    return `${matched.join(' ')} ${verb}`;
+  }
+
+  // 매칭 없으면 마지막 경로 세그먼트를 camelCase/snake_case에서 분리
+  const lastPart = parts[parts.length - 1] || '';
+  if (lastPart) {
+    const words = lastPart
+      .replace(/([a-z])([A-Z])/g, '$1 $2')  // camelCase → 분리
+      .replace(/[_-]/g, ' ')                  // snake_case, kebab-case → 분리
+      .toLowerCase()
+      .trim();
+
+    // 분리된 단어에서 키워드 매칭 재시도
+    for (const word of words.split(' ')) {
+      for (const [key, label] of Object.entries(keywords)) {
+        if (word.includes(key) && !matched.includes(label)) {
+          matched.push(label);
+        }
+      }
+    }
+    if (matched.length > 0) {
+      return `${matched.join(' ')} ${verb}`;
+    }
+
+    return `${words} ${verb}`;
+  }
+
+  return `기능 ${verb}`;
+}
+
 export function PickerResultPanel({ result, registered, registerError, registerApi, closeResult }: {
   result: PickerResult;
   registered: 'idle' | 'loading' | 'done' | 'error';
@@ -141,7 +213,7 @@ export function PickerResultPanel({ result, registered, registerError, registerA
     <div className="border-b border-gray-200 bg-gray-50 px-3 py-2">
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-[11px] font-medium text-gray-600">
-          캡처 결과
+          감지된 기능
         </span>
         <button onClick={closeResult} className="text-[10px] text-gray-400 hover:text-gray-600">
           닫기
@@ -149,48 +221,39 @@ export function PickerResultPanel({ result, registered, registerError, registerA
       </div>
 
       {registered === 'loading' && (
-        <p className="text-[11px] text-violet-500">등록 중...</p>
+        <p className="text-[11px] text-violet-500">도구로 등록하는 중...</p>
       )}
       {registered === 'done' && (
-        <p className="text-[11px] text-green-600">등록 완료</p>
+        <p className="text-[11px] text-green-600">도구 등록 완료!</p>
       )}
       {registered === 'error' && (
-        <p className="text-[11px] text-red-500">등록 실패: {registerError}</p>
+        <p className="text-[11px] text-red-500">{registerError.includes('로그인') ? '로그인이 필요합니다' : '등록에 실패했습니다'}</p>
       )}
 
       {registered === 'idle' && (
         <>
-          <div className="text-[11px] text-gray-500 mb-1.5">
-            <span className="font-mono bg-gray-200 px-1 rounded">{result.elementInfo.tag}</span>
-            {result.elementInfo.text && (
-              <span className="ml-1">"{result.elementInfo.text.slice(0, 20)}"</span>
-            )}
-          </div>
+          {result.elementInfo.text && (
+            <div className="text-[11px] text-gray-500 mb-1.5">
+              "{result.elementInfo.text.slice(0, 25)}" 클릭 시 호출된 기능:
+            </div>
+          )}
 
           {filteredApis.length === 0 ? (
             <p className="text-[11px] text-gray-400">
-              API 요청이 캡처되지 않았습니다.
+              감지된 기능이 없습니다.
             </p>
           ) : (
             <div className="space-y-1 max-h-40 overflow-y-auto">
               {filteredApis.map((api) => (
-                <div key={api.id} className="flex items-center gap-1.5 text-[10px]">
-                  <span className={`font-mono font-bold px-1 py-0.5 rounded ${
-                    api.method === 'GET' ? 'bg-green-100 text-green-700' :
-                    api.method === 'POST' ? 'bg-blue-100 text-blue-700' :
-                    'bg-gray-100 text-gray-600'
-                  }`}>
-                    {api.method}
+                <div key={api.id} className="flex items-center gap-1.5 text-[11px]">
+                  <span className="text-gray-700 truncate flex-1">
+                    {describeApi(api.url, api.method)}
                   </span>
-                  <span className="font-mono text-gray-500 truncate flex-1">
-                    {(() => { try { return new URL(api.url).pathname; } catch { return api.url; } })()}
-                  </span>
-                  <span className="text-gray-300">{api.responseStatus}</span>
                   <button
                     onClick={() => registerApi(api)}
-                    className="px-1.5 py-0.5 bg-violet-500 text-white rounded hover:bg-violet-600 text-[9px] flex-none"
+                    className="px-2 py-0.5 bg-violet-500 text-white rounded hover:bg-violet-600 text-[10px] flex-none"
                   >
-                    등록
+                    도구로 등록
                   </button>
                 </div>
               ))}
