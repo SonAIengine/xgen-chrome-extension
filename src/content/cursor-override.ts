@@ -46,10 +46,14 @@ export function injectCursorOverride(): void {
       transition: transform 0.1s ease;
     }
 
-    /* ai-motion WebGL 테두리 → 보라색 계열 */
+    /* ai-motion WebGL 테두리 숨기고 보라색 CSS 테두리로 대체 */
     ._wrapper_1ooyb_1 canvas {
-      opacity: 0.5 !important;
-      filter: saturate(0.8) hue-rotate(260deg) brightness(0.8) !important;
+      display: none !important;
+    }
+
+    ._wrapper_1ooyb_1._visible_1ooyb_11 {
+      border: 2px solid rgba(139, 92, 246, 0.5) !important;
+      box-shadow: inset 0 0 30px rgba(139, 92, 246, 0.08) !important;
     }
 
     /* 오버레이 래퍼 — 배경 없음, 테두리만 표시 */
