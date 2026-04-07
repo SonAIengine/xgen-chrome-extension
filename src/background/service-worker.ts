@@ -49,8 +49,12 @@ chrome.runtime.onMessage.addListener(
       }
 
       case 'SET_ORIGIN':
-        // SettingsBar UI 표시용 — API 호출에는 active tab origin 사용
-        chrome.storage.local.set({ [STORAGE_KEYS.SERVER_URL]: message.origin });
+        // 수동 설정된 URL이 없을 때만 자동 감지 값으로 설정
+        chrome.storage.local.get(STORAGE_KEYS.SERVER_URL, (result) => {
+          if (!result[STORAGE_KEYS.SERVER_URL]) {
+            chrome.storage.local.set({ [STORAGE_KEYS.SERVER_URL]: message.origin });
+          }
+        });
         sendResponse({ ok: true });
         break;
 
@@ -330,18 +334,18 @@ async function getOriginFromTab(): Promise<string | null> {
  * 3순위: active tab의 origin (XGEN 페이지인 경우)
  */
 async function resolveXgenServerUrl(): Promise<string | null> {
-  // 1순위: 이미 토큰이 있는 xgen origin
-  const xgenOrigin = Object.keys(tokensByOrigin).find((o) => o.includes('xgen'));
-  if (xgenOrigin) return xgenOrigin;
-
-  // 2순위: storage에 저장된 서버 URL
+  // 1순위: 사용자가 수동 설정한 서버 URL (Settings에서 입력)
   const stored = await chrome.storage.local.get(STORAGE_KEYS.SERVER_URL);
   const storedUrl = stored[STORAGE_KEYS.SERVER_URL] as string | undefined;
   if (storedUrl) {
-    // 토큰도 복원 시도
-    const token = await getStoredToken(storedUrl);
-    if (token) return storedUrl;
+    // 토큰 복원 시도 (없어도 URL 자체는 반환)
+    await getStoredToken(storedUrl);
+    return storedUrl;
   }
+
+  // 2순위: 이미 토큰이 있는 xgen origin
+  const xgenOrigin = Object.keys(tokensByOrigin).find((o) => o.includes('xgen'));
+  if (xgenOrigin) return xgenOrigin;
 
   // 3순위: active tab이 XGEN인 경우
   const tabOrigin = await getOriginFromTab();

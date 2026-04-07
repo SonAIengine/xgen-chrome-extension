@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { STORAGE_KEYS, API_PROVIDERS_ENDPOINT } from '../../shared/constants';
+import { STORAGE_KEYS, API_PROVIDERS_ENDPOINT, DEFAULT_SERVER_URL } from '../../shared/constants';
 
 interface ProviderInfo {
   provider: string;
@@ -14,6 +14,8 @@ export function SettingsBar() {
   const [provider, setProvider] = useState('anthropic');
   const [model, setModel] = useState('');
   const [serverUrl, setServerUrl] = useState('');
+  const [serverUrlInput, setServerUrlInput] = useState('');
+  const [editingUrl, setEditingUrl] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -87,6 +89,15 @@ export function SettingsBar() {
     chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: newModel });
   }, []);
 
+  const handleServerUrlSave = useCallback(() => {
+    const trimmed = serverUrlInput.trim().replace(/\/+$/, '');
+    if (trimmed) {
+      setServerUrl(trimmed);
+      chrome.storage.local.set({ [STORAGE_KEYS.SERVER_URL]: trimmed });
+    }
+    setEditingUrl(false);
+  }, [serverUrlInput]);
+
   const currentProvider = providers.find((p) => p.provider === provider);
   const availableProviders = providers.filter((p) => p.available);
   const displayName = currentProvider?.name || provider;
@@ -150,10 +161,39 @@ export function SettingsBar() {
             )}
           </div>
 
-          <div className="text-[10px] text-gray-400 truncate">
-            {serverUrl
-              ? serverUrl.replace(/^https?:\/\//, '')
-              : loading ? '서버 감지 중...' : 'XGEN 페이지를 열면 자동 감지'}
+          <div>
+            <label className="block text-[10px] uppercase tracking-wide text-gray-400 mb-1">
+              Server URL
+            </label>
+            {editingUrl ? (
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={serverUrlInput}
+                  onChange={(e) => setServerUrlInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleServerUrlSave(); if (e.key === 'Escape') setEditingUrl(false); }}
+                  placeholder={DEFAULT_SERVER_URL}
+                  className="flex-1 text-xs rounded border border-gray-200 bg-white text-gray-700 px-2 py-1.5 focus:outline-none focus:border-gray-400"
+                  autoFocus
+                />
+                <button
+                  onClick={handleServerUrlSave}
+                  className="text-xs px-1.5 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600"
+                >
+                  ✓
+                </button>
+              </div>
+            ) : (
+              <div
+                onClick={() => { setServerUrlInput(serverUrl || DEFAULT_SERVER_URL); setEditingUrl(true); }}
+                className="text-xs text-gray-500 truncate cursor-pointer hover:text-gray-700 px-2 py-1.5 rounded border border-transparent hover:border-gray-200"
+                title="클릭하여 서버 URL 변경"
+              >
+                {serverUrl
+                  ? serverUrl.replace(/^https?:\/\//, '')
+                  : loading ? '서버 감지 중...' : '클릭하여 서버 URL 설정'}
+              </div>
+            )}
           </div>
         </div>
       )}
