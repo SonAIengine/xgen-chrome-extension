@@ -99,6 +99,11 @@ export type ExtensionMessage =
   | { type: 'CANVAS_RESULT'; requestId: string; result: unknown }
   // ── API Hook (content script → service worker) ──
   | { type: 'API_CAPTURED'; data: import('./api-hook-types').CapturedApi }
+  // ── SSE 직접 소비 (sidePanel ↔ SW) ──
+  | { type: 'GET_CHAT_CONFIG' }
+  | { type: 'CHAT_CONFIG'; serverUrl: string; authToken: string; provider: string; model: string; pageContext: PageContext | null }
+  | { type: 'RELAY_COMMAND'; event: SSEEvent }
+  | { type: 'COMMAND_RESULT'; requestId: string; result: unknown }
   // ── Element Picker ──
   | { type: 'ELEMENT_PICKER_START' }
   | { type: 'ELEMENT_PICKER_STOP' }

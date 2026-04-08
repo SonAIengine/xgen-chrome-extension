@@ -200,7 +200,7 @@ export class CanvasHandler implements PageHandler {
   private sendCanvasCommand(
     action: string,
     params: Record<string, unknown>,
-    timeoutMs = 5000,
+    timeoutMs = 30000,
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const requestId = crypto.randomUUID();

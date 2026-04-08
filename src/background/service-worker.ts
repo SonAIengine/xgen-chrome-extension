@@ -1,11 +1,10 @@
-import { streamChat } from '../shared/api';
+// streamChat은 sidePanel에서 직접 사용 (MV3 SW fetch streaming 제한)
 import {
   DEFAULT_PROVIDER,
   DEFAULT_MODEL,
   STORAGE_KEYS,
 } from '../shared/constants';
 import type {
-  AiChatRequest,
   ExtensionMessage,
   PageContext,
   SSEEvent,
@@ -19,7 +18,7 @@ import { apiHookRelayFunction } from '../content/api-hook/relay';
 const tokensByOrigin: Record<string, string> = {};
 let cachedPageContext: PageContext | null = null;
 let cachedPageContextTabId: number | null = null;
-let activeAbortController: AbortController | null = null;
+// activeAbortController 제거 — SSE abort는 sidePanel에서 직접 처리
 
 // ── API Hook State ──
 const hookedTabs = new Set<number>();
@@ -54,15 +53,84 @@ chrome.runtime.onMessage.addListener(
         sendResponse({ ok: true });
         break;
 
+      case 'GET_CHAT_CONFIG': {
+        // sidePanel이 SSE를 직접 소비하기 위해 필요한 config 반환
+        (async () => {
+          const settings = await chrome.storage.local.get([
+            STORAGE_KEYS.PROVIDER,
+            STORAGE_KEYS.MODEL,
+          ]);
+          const serverUrl = await resolveXgenServerUrl();
+          const authToken = serverUrl ? (tokensByOrigin[serverUrl] || await getStoredToken(serverUrl)) : '';
+          const pageContext = await getPageContextFromTab().catch(() => null);
+
+          if (pageContext) {
+            cachedPageContext = pageContext;
+          }
+
+          // SSE 스트리밍은 Next.js 프록시를 우회하여 gateway에 직접 연결해야 함
+          // Next.js rewrites는 SSE 응답을 버퍼링하므로 실시간 스트리밍이 안 됨
+          let streamUrl = serverUrl || '';
+          if (streamUrl) {
+            try {
+              const parsed = new URL(streamUrl);
+              // 프론트엔드(3000) → gateway(8000)로 교체
+              if (parsed.port === '3000' || !parsed.port) {
+                parsed.port = '8000';
+                streamUrl = parsed.origin;
+              }
+            } catch { /* URL 파싱 실패 시 원본 사용 */ }
+          }
+
+          sendResponse({
+            type: 'CHAT_CONFIG',
+            serverUrl: streamUrl,
+            authToken: authToken || '',
+            provider: settings[STORAGE_KEYS.PROVIDER] || DEFAULT_PROVIDER,
+            model: settings[STORAGE_KEYS.MODEL] || DEFAULT_MODEL,
+            pageContext: pageContext || cachedPageContext,
+          });
+        })();
+        return true; // async response
+      }
+
+      case 'RELAY_COMMAND': {
+        // sidePanel이 SSE에서 받은 canvas_command/page_command를 SW로 위임
+        const event = (message as any).event as SSEEvent;
+        console.log('[XGEN SW] RELAY_COMMAND received:', event.type, event);
+        (async () => {
+          if (event.type === 'canvas_command') {
+            await sendToContentScript({
+              type: 'CANVAS_COMMAND',
+              requestId: (event as any).requestId || crypto.randomUUID(),
+              action: event.action,
+              params: event.params,
+            });
+          } else if (event.type === 'page_command') {
+            const requestId = (event as any).requestId || crypto.randomUUID();
+            const apiHookResult = await handleApiHookAction(event.action, event.params);
+            if (apiHookResult) {
+              await postCommandResultToBackend(requestId, apiHookResult);
+            } else {
+              await sendToContentScript({
+                type: 'PAGE_COMMAND',
+                requestId,
+                action: event.action,
+                params: event.params,
+              });
+            }
+          }
+          sendResponse({ ok: true });
+        })();
+        return true; // async response
+      }
+
       case 'SEND_MESSAGE':
-        handleSendMessage(message.content, message.summary);
+        // 레거시 호환: sidePanel이 직접 SSE를 소비하므로 더 이상 사용하지 않음
         sendResponse({ ok: true });
         break;
 
       case 'STOP_STREAM':
-        activeAbortController?.abort();
-        activeAbortController = null;
-        broadcastToSidePanel({ type: 'STREAM_DONE' });
         sendResponse({ ok: true });
         break;
 
@@ -189,125 +257,7 @@ chrome.storage.local.get(null, (items) => {
   }
 });
 
-// ── Core: handle user message ──
-
-async function handleSendMessage(content: string, summary?: string) {
-  activeAbortController?.abort();
-  activeAbortController = new AbortController();
-
-  const settings = await chrome.storage.local.get([
-    STORAGE_KEYS.PROVIDER,
-    STORAGE_KEYS.MODEL,
-  ]);
-
-  // XGEN 서버 URL 결정: 저장된 XGEN origin 우선, 없으면 active tab origin
-  const serverUrl = await resolveXgenServerUrl();
-  if (!serverUrl) {
-    broadcastToSidePanel({ type: 'STREAM_ERROR', error: 'XGEN에 먼저 로그인해주세요 (XGEN 페이지에서 한 번 접속하면 세션이 유지됩니다)' });
-    return;
-  }
-
-  const authToken = tokensByOrigin[serverUrl] || await getStoredToken(serverUrl);
-  if (!authToken) {
-    broadcastToSidePanel({ type: 'STREAM_ERROR', error: `${serverUrl}에 먼저 로그인해주세요` });
-    return;
-  }
-
-  const provider = settings[STORAGE_KEYS.PROVIDER] || DEFAULT_PROVIDER;
-  const model = settings[STORAGE_KEYS.MODEL] || DEFAULT_MODEL;
-
-  const pageContext = await getPageContextFromTab().catch((err) => {
-    console.warn('[XGEN SW] getPageContextFromTab 실패:', err);
-    return null;
-  });
-  console.log('[XGEN SW] pageContext:', pageContext ? `elements=${pageContext.elements?.length ?? 0}ch, pageType=${pageContext.pageType}` : 'null');
-
-  const request: AiChatRequest = {
-    messages: [{ role: 'user', content }],
-    provider,
-    model,
-    ...(summary ? { conversation_summary: summary } : {}),
-    ...(pageContext ? { page_context: pageContext } : {}),
-    ...(pageContext?.pageType === 'canvas' && pageContext.data?.canvasState
-      ? { canvas_state: pageContext.data.canvasState as Record<string, unknown> }
-      : {}),
-  };
-
-  try {
-    for await (const event of streamChat(serverUrl, authToken, request, activeAbortController.signal)) {
-      if (activeAbortController?.signal.aborted) break;
-      await handleSSEEvent(event);
-    }
-
-    broadcastToSidePanel({ type: 'STREAM_DONE' });
-  } catch (err) {
-    // abort된 경우 에러 무시 (STOP_STREAM에서 이미 STREAM_DONE 전송)
-    if (err instanceof DOMException && err.name === 'AbortError') return;
-    if (activeAbortController?.signal.aborted) return;
-
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    const error = `${msg}\n(서버: ${serverUrl}/api/ai-chat/stream)`;
-    broadcastToSidePanel({ type: 'STREAM_ERROR', error });
-  }
-}
-
-// ── SSE event routing ──
-
-async function handleSSEEvent(event: SSEEvent) {
-  switch (event.type) {
-    case 'token':
-      broadcastToSidePanel({ type: 'STREAM_TOKEN', content: event.content });
-      break;
-
-    case 'tool_start':
-      broadcastToSidePanel({ type: 'TOOL_START', tool: event.tool, input: event.input });
-      break;
-
-    case 'tool_end':
-      broadcastToSidePanel({ type: 'TOOL_END', tool: event.tool, output: event.output });
-      break;
-
-    case 'canvas_command':
-      await sendToContentScript({
-        type: 'CANVAS_COMMAND',
-        requestId: (event as any).requestId || crypto.randomUUID(),
-        action: event.action,
-        params: event.params,
-      });
-      break;
-
-    case 'page_command': {
-      const requestId = (event as any).requestId || crypto.randomUUID();
-
-      // API Hook 액션은 SW에서 직접 처리 (content script로 보내지 않음)
-      const apiHookResult = await handleApiHookAction(event.action, event.params);
-      if (apiHookResult) {
-        await postCommandResultToBackend(requestId, apiHookResult);
-        break;
-      }
-
-      // 그 외 액션은 content script로 전달
-      await sendToContentScript({
-        type: 'PAGE_COMMAND',
-        requestId,
-        action: event.action,
-        params: event.params,
-      });
-      break;
-    }
-
-    case 'token_usage':
-      broadcastToSidePanel({ type: 'STREAM_TOKEN_USAGE', tokenUsage: (event as any).usage });
-      break;
-
-    case 'error':
-      broadcastToSidePanel({ type: 'STREAM_ERROR', error: event.content });
-      break;
-
-    case 'done':
-      break;
-  }
-}
+// ── (SSE는 sidePanel에서 직접 소비 — MV3 SW fetch streaming 제한 우회) ──
 
 // ── Helpers ──
 
@@ -391,7 +341,12 @@ async function getPageContextFromTab(): Promise<PageContext | null> {
 async function sendToContentScript(message: ExtensionMessage) {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tabs.length > 0 && tabs[0].id) {
-    await chrome.tabs.sendMessage(tabs[0].id, message).catch(() => {});
+    console.log('[XGEN SW] sendToContentScript:', message.type, 'to tab', tabs[0].id);
+    await chrome.tabs.sendMessage(tabs[0].id, message).catch((err) => {
+      console.error('[XGEN SW] sendToContentScript failed:', message.type, err);
+    });
+  } else {
+    console.warn('[XGEN SW] sendToContentScript: no active tab found');
   }
 }
 
