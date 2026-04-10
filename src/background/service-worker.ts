@@ -280,22 +280,26 @@ async function getOriginFromTab(): Promise<string | null> {
  * 3순위: active tab의 origin (XGEN 페이지인 경우)
  */
 async function resolveXgenServerUrl(): Promise<string | null> {
-  // 1순위: 이미 토큰이 있는 xgen origin
-  const xgenOrigin = Object.keys(tokensByOrigin).find((o) => o.includes('xgen'));
-  if (xgenOrigin) return xgenOrigin;
+  // 1순위: active tab의 origin (사용자가 보고 있는 페이지 우선)
+  const tabOrigin = await getOriginFromTab();
+  if (tabOrigin) {
+    // localhost거나 xgen 사이트면 해당 origin 사용
+    const isLocal = tabOrigin.includes('localhost') || tabOrigin.includes('127.0.0.1');
+    const isXgen = tabOrigin.includes('xgen');
+    if (isLocal || isXgen) return tabOrigin;
+  }
 
   // 2순위: storage에 저장된 서버 URL
   const stored = await chrome.storage.local.get(STORAGE_KEYS.SERVER_URL);
   const storedUrl = stored[STORAGE_KEYS.SERVER_URL] as string | undefined;
   if (storedUrl) {
-    // 토큰도 복원 시도
     const token = await getStoredToken(storedUrl);
     if (token) return storedUrl;
   }
 
-  // 3순위: active tab이 XGEN인 경우
-  const tabOrigin = await getOriginFromTab();
-  if (tabOrigin?.includes('xgen')) return tabOrigin;
+  // 3순위: 토큰이 있는 xgen origin (fallback)
+  const xgenOrigin = Object.keys(tokensByOrigin).find((o) => o.includes('xgen'));
+  if (xgenOrigin) return xgenOrigin;
 
   return null;
 }

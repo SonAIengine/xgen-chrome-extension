@@ -27,6 +27,22 @@ export interface ToolCall {
 
 // ── SSE Events (from backend) ──
 
+export interface PipelineState {
+  stage: string;
+  is_active: boolean;
+  history: string[];
+  analysis?: Record<string, unknown>;
+  completed_actions?: string[];
+}
+
+export interface PlanQuestion {
+  title: string;
+  type: 'single' | 'multi';
+  options: string[];
+  allow_custom?: boolean;
+  skippable?: boolean;
+}
+
 export type SSEEvent =
   | { type: 'token'; content: string }
   | { type: 'tool_start'; tool: string; input: string }
@@ -34,7 +50,9 @@ export type SSEEvent =
   | { type: 'canvas_command'; action: string; params: Record<string, unknown> }
   | { type: 'page_command'; action: string; params: Record<string, unknown>; requestId?: string }
   | { type: 'token_usage'; usage: TokenUsage }
-  | { type: 'done' }
+  | { type: 'stage_change'; stage: string; pipeline: PipelineState }
+  | { type: 'plan_question'; questions: PlanQuestion[] }
+  | { type: 'done'; pipeline?: PipelineState }
   | { type: 'error'; content: string };
 
 // ── API Request ──
@@ -46,6 +64,9 @@ export interface AiChatRequest {
   canvas_state?: Record<string, unknown>;
   page_context?: PageContext;
   conversation_summary?: string;
+  pipeline_stage?: string;
+  pipeline_analysis?: Record<string, unknown>;
+  pipeline_completed?: string[];
 }
 
 // ── Page Agent ──

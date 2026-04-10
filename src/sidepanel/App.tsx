@@ -3,11 +3,15 @@ import { useChat } from './hooks/useChat';
 import { ChatMessage } from './components/ChatMessage';
 import { InputArea } from './components/InputArea';
 import { SettingsBar } from './components/SettingsBar';
+import { PlanQuestionPopup } from './components/PlanQuestionPopup';
 import { useElementPicker, PickerResultPanel } from './components/ElementPickerButton';
 import type { ExtensionMessage } from '../shared/types';
 
 export function App() {
-  const { messages, isStreaming, sendMessage, stopStream, clearMessages } = useChat();
+  const {
+    messages, isStreaming, sendMessage, stopStream, clearMessages,
+    planQuestions, submitQuestionAnswers, dismissQuestions,
+  } = useChat();
   const picker = useElementPicker();
   const [authCapturing, setAuthCapturing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -117,6 +121,15 @@ export function App() {
         ))}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Plan Question Popup */}
+      {planQuestions && (
+        <PlanQuestionPopup
+          questions={planQuestions}
+          onSubmit={submitQuestionAnswers}
+          onDismiss={dismissQuestions}
+        />
+      )}
 
       {/* Input */}
       <InputArea onSend={sendMessage} onStop={stopStream} isStreaming={isStreaming} />

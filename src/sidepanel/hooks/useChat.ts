@@ -1,11 +1,13 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { streamChat } from '../../shared/api';
-import type { ChatMessage, ToolCall, ExtensionMessage, PageContext, AiChatRequest } from '../../shared/types';
+import type { ChatMessage, ToolCall, ExtensionMessage, PageContext, AiChatRequest, PipelineState, PlanQuestion } from '../../shared/types';
 
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [pageContext, setPageContext] = useState<PageContext | null>(null);
+  const [pipelineState, setPipelineState] = useState<PipelineState | null>(null);
+  const [planQuestions, setPlanQuestions] = useState<PlanQuestion[] | null>(null);
   const streamingRef = useRef<{ messageId: string; content: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -67,6 +69,9 @@ export function useChat() {
           ...(pc?.pageType === 'canvas' && pc.data?.canvasState
             ? { canvas_state: pc.data.canvasState as Record<string, unknown> }
             : {}),
+          ...(pipelineState ? { pipeline_stage: pipelineState.stage } : {}),
+          ...(pipelineState?.analysis ? { pipeline_analysis: pipelineState.analysis as Record<string, unknown> } : {}),
+          ...(pipelineState?.completed_actions ? { pipeline_completed: pipelineState.completed_actions } : {}),
         };
 
         // 3. sidePanel에서 직접 SSE 스트리밍
@@ -97,6 +102,14 @@ export function useChat() {
               console.log('[useChat] RELAY_COMMAND 전송 완료');
               break;
 
+            case 'stage_change':
+              setPipelineState((event as any).pipeline);
+              break;
+
+            case 'plan_question':
+              setPlanQuestions((event as any).questions as PlanQuestion[]);
+              break;
+
             case 'token_usage':
               updateTokenUsage((event as any).usage);
               break;
@@ -106,6 +119,9 @@ export function useChat() {
               break;
 
             case 'done':
+              if ((event as any).pipeline) {
+                setPipelineState((event as any).pipeline);
+              }
               break;
           }
         }
@@ -123,7 +139,7 @@ export function useChat() {
         abortRef.current = null;
       }
     },
-    [isStreaming, messages],
+    [isStreaming, messages, pipelineState],
   );
 
   // ── 헬퍼 함수들 ──
@@ -207,9 +223,30 @@ export function useChat() {
     setMessages([]);
     streamingRef.current = null;
     setIsStreaming(false);
+    setPipelineState(null);
+    setPlanQuestions(null);
   }, []);
 
-  return { messages, isStreaming, pageContext, sendMessage, stopStream, clearMessages };
+  const submitQuestionAnswers = useCallback(
+    (answers: { title: string; answer: string }[]) => {
+      setPlanQuestions(null);
+      const formatted = answers
+        .map((a) => `질문: ${a.title}\n답변: ${a.answer}`)
+        .join('\n\n');
+      sendMessage(formatted);
+    },
+    [sendMessage],
+  );
+
+  const dismissQuestions = useCallback(() => {
+    setPlanQuestions(null);
+  }, []);
+
+  return {
+    messages, isStreaming, pageContext, pipelineState,
+    planQuestions, submitQuestionAnswers, dismissQuestions,
+    sendMessage, stopStream, clearMessages,
+  };
 }
 
 /** 최근 대화 요약 빌드 (최대 2턴, 토큰 절약) */
