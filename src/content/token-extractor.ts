@@ -9,7 +9,8 @@ export function extractAndSendToken(): void {
 
   const token =
     localStorage.getItem('xgen_access_token') ??
-    document.cookie.match(/access_token=([^;]+)/)?.[1] ??
+    document.cookie.match(/(?:^|; )xgen_access_token=([^;]+)/)?.[1] ??
+    document.cookie.match(/(?:^|; )access_token=([^;]+)/)?.[1] ??
     null;
 
   if (token) {

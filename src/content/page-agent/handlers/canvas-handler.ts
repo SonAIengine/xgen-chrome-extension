@@ -26,9 +26,12 @@ export class CanvasHandler implements PageHandler {
       this.controller = new PageController({ viewportExpansion: 3 });
     }
 
-    // Listen for canvas results from the XGEN page
+    // Listen for canvas results via postMessage (CSP-safe, works across isolated/main world)
     this.resultListener = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
+      const msg = (e as MessageEvent).data;
+      if (msg?.type !== 'xgen:canvas-result') return;
+
+      const detail = msg;
       if (!detail?.requestId) return;
 
       const pending = this.pendingRequests.get(detail.requestId);
@@ -39,7 +42,7 @@ export class CanvasHandler implements PageHandler {
       }
     };
 
-    window.addEventListener('xgen:canvas-result', this.resultListener);
+    window.addEventListener('message', this.resultListener);
   }
 
   matches(url: URL): boolean {
@@ -166,7 +169,7 @@ export class CanvasHandler implements PageHandler {
     this.observer = null;
 
     if (this.resultListener) {
-      window.removeEventListener('xgen:canvas-result', this.resultListener);
+      window.removeEventListener('message', this.resultListener);
       this.resultListener = null;
     }
 
@@ -212,11 +215,13 @@ export class CanvasHandler implements PageHandler {
 
       this.pendingRequests.set(requestId, { resolve, reject, timer });
 
-      window.dispatchEvent(
-        new CustomEvent('xgen:canvas-command', {
-          detail: { requestId, action, params },
-        }),
-      );
+      // postMessage는 CSP에 영향 안 받고, isolated ↔ main world 간 통신 가능
+      window.postMessage({
+        type: 'xgen:canvas-command',
+        requestId,
+        action,
+        params,
+      }, '*');
     });
   }
 }
