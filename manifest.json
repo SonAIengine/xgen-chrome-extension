@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "XGEN Pathfinder",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "자연어로 XGEN AI 플랫폼을 제어하는 AI 어시스턴트",
   "permissions": [
     "sidePanel",
