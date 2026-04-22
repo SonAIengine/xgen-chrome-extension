@@ -532,6 +532,66 @@ async function handleApiHookAction(
           authProfileId = matchResult || undefined;
         }
 
+        // ── 캡처된 원본 request body로 static_body/api_body 보정 ──
+        // AI가 필드명을 상상해서 넣는 것을 방지. 캡처된 원본이 있으면 그것이 단일 진실 원천.
+        let aiApiBody = (toolData.api_body as Record<string, unknown>) || {};
+        let aiStaticBody = (toolData.static_body as Record<string, unknown>) || {};
+        let aiBodyType = (toolData.body_type as string) || 'application/json';
+
+        try {
+          const targetUrl = toolData.api_url as string;
+          const targetMethod = ((toolData.api_method as string) || 'GET').toUpperCase();
+          const stripQuery = (u: string) => u.split('?')[0].split('#')[0];
+          const targetBase = stripQuery(targetUrl);
+
+          // 모든 탭 캡처에서 url(쿼리 제외) + method 매칭, 가장 최근 것
+          let matched: CapturedApi | undefined;
+          for (const [, apis] of capturedApisByTab) {
+            for (const a of apis) {
+              if (a.method.toUpperCase() === targetMethod && stripQuery(a.url) === targetBase) {
+                if (!matched || a.timestamp > matched.timestamp) matched = a;
+              }
+            }
+          }
+
+          if (matched?.requestBody) {
+            const ct = (matched.contentType || '').toLowerCase();
+            // JSON 원본: api_body 스키마에 선언된 파라미터는 런타임 주입용으로 남기고,
+            // 나머지 원본 필드는 static_body로 강제 주입. AI가 지어낸 필드명은 제거됨.
+            if (ct.includes('application/json') || matched.requestBody.trim().startsWith('{')) {
+              try {
+                const original = JSON.parse(matched.requestBody) as Record<string, unknown>;
+                if (original && typeof original === 'object' && !Array.isArray(original)) {
+                  const paramKeys = new Set(Object.keys(aiApiBody || {}));
+                  const rebuiltStatic: Record<string, unknown> = {};
+                  for (const [k, v] of Object.entries(original)) {
+                    if (!paramKeys.has(k)) rebuiltStatic[k] = v;
+                  }
+                  // 원본에 없는 api_body 필드(AI 상상) 제거
+                  const cleanedApiBody: Record<string, unknown> = {};
+                  for (const [k, v] of Object.entries(aiApiBody)) {
+                    if (k in original) cleanedApiBody[k] = v;
+                  }
+                  aiStaticBody = rebuiltStatic;
+                  aiApiBody = cleanedApiBody;
+                  aiBodyType = 'application/json';
+                  console.log(`[XGEN SW] register_tool: body normalized from captured original. ` +
+                    `static_body keys=${Object.keys(rebuiltStatic).join(',')}, api_body keys=${Object.keys(cleanedApiBody).join(',')}`);
+                }
+              } catch (e) {
+                console.warn('[XGEN SW] register_tool: captured JSON body parse failed, keeping AI values', e);
+              }
+            } else {
+              // 비 JSON 원본(form-urlencoded 등)은 원본 문자열을 그대로 static_body 힌트로 남김
+              console.log(`[XGEN SW] register_tool: non-JSON captured body (contentType=${ct}), keeping AI values`);
+            }
+          } else {
+            console.log(`[XGEN SW] register_tool: no captured match for ${targetMethod} ${targetBase}, keeping AI values`);
+          }
+        } catch (e) {
+          console.warn('[XGEN SW] register_tool: body normalization error, keeping AI values', e);
+        }
+
         // tool 저장 요청
         const savePayload = {
           function_name: toolData.function_name as string,
@@ -542,9 +602,9 @@ async function handleApiHookAction(
             api_url: toolData.api_url as string,
             api_method: (toolData.api_method as string) || 'GET',
             api_header: (toolData.api_header as Record<string, string>) || {},
-            api_body: (toolData.api_body as Record<string, unknown>) || {},
-            static_body: (toolData.static_body as Record<string, unknown>) || {},
-            body_type: (toolData.body_type as string) || 'application/json',
+            api_body: aiApiBody,
+            static_body: aiStaticBody,
+            body_type: aiBodyType,
             api_timeout: (toolData.api_timeout as number) || 30,
             is_query_string: (toolData.is_query_string as boolean) || false,
             response_filter: (toolData.response_filter as boolean) || false,
