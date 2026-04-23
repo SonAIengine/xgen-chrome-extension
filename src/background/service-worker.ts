@@ -526,7 +526,9 @@ async function handleApiHookAction(
             return {
               success: false,
               action,
-              error: `이 API는 인증이 필요합니다. 해당 사이트에서 로그인해주세요. API hook이 활성 상태에서 로그인하면 자동으로 인증 프로필이 생성됩니다. 로그인 후 다시 등록을 시도해주세요.`,
+              error: `이 API는 인증이 필요하지만 로그인 요청이 캡처되지 않았습니다. ` +
+                `start_api_hook이 켜진 상태에서 로그인이 수행되어야 인증 프로필이 자동 생성됩니다. ` +
+                `해결 방법: (1) start_api_hook이 켜져 있는지 확인 후, (2) 로그아웃 → 재로그인으로 토큰을 재발급받은 다음, (3) register_tool을 다시 시도하세요.`,
             };
           }
           authProfileId = matchResult || undefined;
@@ -726,6 +728,35 @@ async function autoMatchAuthProfile(
 
     const capturedLogin = findCapturedLoginForDomain(apiDomain);
     if (!capturedLogin) {
+      // 2-a) autoCreateAuthProfileFromCapture는 API_CAPTURED 시점에 fire-and-forget으로 실행됨.
+      //      레이스로 인해 첫 조회에서 프로필이 아직 안 만들어졌을 수 있으므로
+      //      짧게 한 번 대기 후 서버 프로필 목록을 재조회하여 구제한다.
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        const retryResp = await fetch(`${serverUrl}/api/session-station/v1/auth-profiles`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (retryResp.ok) {
+          const retryProfiles = await retryResp.json() as Array<{
+            service_id: string; name: string; status: string;
+          }>;
+          const domainParts = apiDomain.replace('www.', '').split('.');
+          const domainKey = domainParts[0];
+          const matched = retryProfiles.find((p) =>
+            p.status === 'active' && (
+              p.service_id.toLowerCase().includes(domainKey) ||
+              p.name.toLowerCase().includes(domainKey)
+            )
+          );
+          if (matched) {
+            console.log(`[XGEN SW] Auto-matched auth profile on retry: ${matched.service_id} for ${apiDomain}`);
+            return matched.service_id;
+          }
+        }
+      } catch (e) {
+        console.warn('[XGEN SW] retry profile fetch failed:', e);
+      }
+
       const capturedAuth = findCapturedAuthForDomain(apiDomain);
       if (capturedAuth) {
         // Authorization 헤더 있지만 로그인 미캡처 → 로그인 필요
