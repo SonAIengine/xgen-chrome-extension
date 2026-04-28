@@ -1,6 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { streamChat } from '../../shared/api';
-import type { ChatMessage, ToolCall, ExtensionMessage, PageContext, AiChatRequest, PipelineState, PlanQuestion } from '../../shared/types';
+import { streamChat, streamGreet } from '../../shared/api';
+import type {
+  ChatMessage, ToolCall, ExtensionMessage, PageContext, AiChatRequest,
+  PipelineState, PlanQuestion, Chip, SiteInfo,
+} from '../../shared/types';
 
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -219,6 +222,127 @@ export function useChat() {
     abortRef.current?.abort();
   }, []);
 
+  // ── PathFinder: proactive greeting ──
+  const greetProactive = useCallback(async (url: string) => {
+    try {
+      const config = await chrome.runtime.sendMessage({
+        type: 'GET_CHAT_CONFIG',
+      } satisfies ExtensionMessage);
+      console.log('[PathFinder] greet config:', {
+        url,
+        serverUrl: config?.serverUrl,
+        hasToken: !!config?.authToken,
+        provider: config?.provider,
+      });
+      if (!config?.serverUrl) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: 'PathFinder: XGEN 서버 URL이 설정되지 않았습니다. 설정에서 서버 주소를 확인해주세요.',
+            timestamp: Date.now(),
+          },
+        ]);
+        return;
+      }
+      if (!config?.authToken) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: `PathFinder: ${config.serverUrl} 에 먼저 로그인해주세요. 로그인하면 이 사이트에서 자동 제안을 받을 수 있어요.`,
+            timestamp: Date.now(),
+          },
+        ]);
+        return;
+      }
+
+      const messageId = crypto.randomUUID();
+      let siteInfoCaptured: SiteInfo | undefined;
+      let chipsCaptured: Chip[] | undefined;
+      let contentAccum = '';
+      let messageAdded = false;
+
+      for await (const ev of streamGreet(config.serverUrl, config.authToken, url, {
+        provider: config.provider,
+        model: config.model,
+      })) {
+        switch (ev.type) {
+          case 'context':
+            siteInfoCaptured = ev.site;
+            console.log('[PathFinder] context:', ev.site);
+            break;
+          case 'suggestions':
+            chipsCaptured = ev.items || [];
+            console.log('[PathFinder] suggestions:', chipsCaptured.length);
+            break;
+          case 'token':
+            contentAccum += ev.content;
+            if (!messageAdded) {
+              messageAdded = true;
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: messageId,
+                  role: 'assistant',
+                  content: contentAccum,
+                  timestamp: Date.now(),
+                  isProactive: true,
+                  chips: chipsCaptured,
+                  siteInfo: siteInfoCaptured,
+                },
+              ]);
+            } else {
+              setMessages((prev) =>
+                prev.map((m) => (m.id === messageId ? { ...m, content: contentAccum } : m)),
+              );
+            }
+            break;
+          case 'done':
+            // 토큰이 전혀 안 나왔을 경우(LLM 미설정 등) 폴백으로라도 메시지 추가
+            if (!messageAdded) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: messageId,
+                  role: 'assistant',
+                  content: contentAccum || '무엇을 도와드릴까요?',
+                  timestamp: Date.now(),
+                  isProactive: true,
+                  chips: chipsCaptured,
+                  siteInfo: siteInfoCaptured,
+                },
+              ]);
+            } else if (chipsCaptured) {
+              // chips가 token보다 늦게 도착한 경우도 대비해 최종 업데이트
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === messageId ? { ...m, chips: chipsCaptured, siteInfo: siteInfoCaptured } : m,
+                ),
+              );
+            }
+            break;
+          case 'error':
+            console.warn('[useChat] greet error:', ev.content);
+            break;
+        }
+      }
+    } catch (err) {
+      console.warn('[useChat] greetProactive failed:', err);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `PathFinder 호출 실패: ${err instanceof Error ? err.message : String(err)}`,
+          timestamp: Date.now(),
+        },
+      ]);
+    }
+  }, []);
+
   const clearMessages = useCallback(() => {
     setMessages([]);
     streamingRef.current = null;
@@ -245,7 +369,7 @@ export function useChat() {
   return {
     messages, isStreaming, pageContext, pipelineState,
     planQuestions, submitQuestionAnswers, dismissQuestions,
-    sendMessage, stopStream, clearMessages,
+    sendMessage, stopStream, clearMessages, greetProactive,
   };
 }
 

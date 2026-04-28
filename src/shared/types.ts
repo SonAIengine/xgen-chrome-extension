@@ -6,6 +6,35 @@ export interface TokenUsage {
   totalTokens: number;
 }
 
+// ── PathFinder ──
+
+export interface SiteInfo {
+  status: 'matched' | 'unknown' | 'invalid_url';
+  host?: string;
+  collection_id?: string;
+  name?: string;
+  description?: string;
+  matched_pattern?: string;
+  tool_count?: number;
+  ambiguous?: boolean;
+}
+
+export interface Chip {
+  id: string;
+  title: string;
+  emoji?: string;
+  intent: string;
+  requires_confirm?: boolean;
+  tool_name?: string;
+}
+
+export type PathFinderEvent =
+  | { type: 'context'; site: SiteInfo }
+  | { type: 'suggestions'; items: Chip[] }
+  | { type: 'token'; content: string }
+  | { type: 'done' }
+  | { type: 'error'; content: string };
+
 // ── Chat Messages ──
 
 export interface ChatMessage {
@@ -15,6 +44,10 @@ export interface ChatMessage {
   timestamp: number;
   toolCalls?: ToolCall[];
   tokenUsage?: TokenUsage;
+  // PathFinder proactive greeting
+  isProactive?: boolean;
+  chips?: Chip[];
+  siteInfo?: SiteInfo;
 }
 
 export interface ToolCall {
@@ -86,6 +119,7 @@ export interface PageContext {
   url: string;
   title: string;
   elements?: string;             // DOM 평탄화 텍스트 "[0]<button>..." (PageController)
+  snapshotId?: string;           // elements 해시 — LLM 도구 호출 시 freshness 검증용
   data: Record<string, unknown>;
   availableActions: string[];
   timestamp: number;
@@ -113,7 +147,7 @@ export type ExtensionMessage =
   | { type: 'SET_TOKEN'; token: string; origin: string }
   | { type: 'SET_ORIGIN'; origin: string }
   | { type: 'GET_PAGE_CONTEXT' }
-  | { type: 'PAGE_CONTEXT_UPDATE'; context: PageContext }
+  | { type: 'PAGE_CONTEXT_UPDATE'; context: PageContext; tabId?: number }
   | { type: 'PAGE_COMMAND'; requestId: string; action: string; params: Record<string, unknown> }
   | { type: 'PAGE_COMMAND_RESULT'; requestId: string; result: PageCommandResult }
   | { type: 'CANVAS_COMMAND'; requestId: string; action: string; params: Record<string, unknown> }

@@ -16,6 +16,32 @@ import { PageController } from '@page-agent/page-controller';
 import type { PageHandler, PageContext, PageCommandResult, PageType } from '../types';
 import { detectPageType } from '../page-detector';
 
+/**
+ * DOM 평탄화 텍스트의 해시 — snapshot_id.
+ * FNV-1a 32-bit, 8자 hex. 백엔드/LLM이 이 id를 도구 호출에 포함시켜 freshness를 검증한다.
+ */
+function computeSnapshotId(content: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < content.length; i++) {
+    hash ^= content.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+/** 대상 요소가 실제로 보이고 상호작용 가능한지 확인. */
+function isInteractableElement(el: Element | null | undefined): boolean {
+  if (!el || !(el instanceof HTMLElement)) return false;
+  if (el.hidden) return false;
+  if (el.getAttribute('aria-hidden') === 'true') return false;
+  const style = window.getComputedStyle(el);
+  if (style.display === 'none' || style.visibility === 'hidden') return false;
+  if (parseFloat(style.opacity || '1') === 0) return false;
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) return false;
+  return true;
+}
+
 export class GenericHandler implements PageHandler {
   readonly pageType: PageType = 'unknown';
 
@@ -53,6 +79,7 @@ export class GenericHandler implements PageHandler {
       url: state.url,
       title: state.title,
       elements: state.content,
+      snapshotId: computeSnapshotId(state.content ?? ''),
       data: { ...(menuMap ? { menuMap } : {}) },
       availableActions: this.getAvailableActions(),
       timestamp: Date.now(),
@@ -75,6 +102,30 @@ export class GenericHandler implements PageHandler {
       // updateTree()를 호출하지 않음 — extractContext()에서 빌드한 트리의 인덱스를
       // 그대로 사용해야 AI가 지정한 인덱스와 일치한다.
       // updateTree()는 DOM을 재스캔하여 인덱스를 재할당하므로 불일치 발생.
+
+      // snapshot_id 검증은 백엔드에서만 수행한다 (대화 이력 내 stale ref 차단).
+      // 확장 측에서 현재 DOM 해시를 re-check하면 동적 페이지(캐러셀, 배너 등)에서
+      // content hash가 매 초 바뀌어 정상 인덱스까지 거부되므로 수행하지 않는다.
+      // page-controller 인덱스는 DOM 트리 위치 기반이라 콘텐츠 변경에 안정적이다.
+
+      // ── Step 4: 숨겨진/상호작용 불가 요소 차단 (click/input/select) ──
+      if (action === 'click_element' || action === 'input_text' || action === 'select_option') {
+        const idx = params.index as number;
+        const selectorMap = (this.controller as any).selectorMap as Map<number, any> | undefined;
+        const node = selectorMap?.get(idx);
+        if (!node) {
+          return { success: false, action, error: `인덱스 [${idx}]를 찾을 수 없습니다. page_context의 인덱스 범위를 확인하세요.` };
+        }
+        if (!isInteractableElement(node.ref)) {
+          return {
+            success: false,
+            action,
+            error: `인덱스 [${idx}] 요소가 숨겨져 있거나 상호작용 불가 상태입니다 `
+              + `(hidden/display:none/visibility:hidden/opacity:0/zero-size). `
+              + `scroll_page로 스크롤하거나 다른 요소를 선택하세요.`,
+          };
+        }
+      }
 
       // 마스크 표시 (가상 커서 오버레이)
       await this.controller.showMask().catch(() => {});
@@ -122,6 +173,7 @@ export class GenericHandler implements PageHandler {
         url: state.url,
         title: state.title,
         elements: state.content,
+        snapshotId: computeSnapshotId(state.content ?? ''),
         data: {},
         availableActions: this.getAvailableActions(),
         timestamp: Date.now(),

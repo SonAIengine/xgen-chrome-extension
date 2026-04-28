@@ -1,6 +1,8 @@
 export const DEFAULT_SERVER_URL = 'https://xgen.x2bee.com';
 export const API_CHAT_ENDPOINT = '/api/ai-chat/stream';
 export const API_PROVIDERS_ENDPOINT = '/api/ai-chat/providers';
+export const API_PATHFINDER_RESOLVE = '/api/pathfinder/resolve';
+export const API_PATHFINDER_GREET = '/api/pathfinder/greet';
 export const DEFAULT_PROVIDER = 'anthropic';
 export const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
 
