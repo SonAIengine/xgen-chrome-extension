@@ -14,6 +14,8 @@ export function SettingsBar() {
   const [provider, setProvider] = useState('anthropic');
   const [model, setModel] = useState('');
   const [serverUrl, setServerUrl] = useState('');
+  /** 입력 중인 server URL (저장 전). serverUrl과 다르면 "저장" 버튼 활성화. */
+  const [serverUrlDraft, setServerUrlDraft] = useState('');
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -29,6 +31,7 @@ export function SettingsBar() {
         setProvider(savedProvider);
         setModel(savedModel);
         setServerUrl(savedUrl);
+        setServerUrlDraft(savedUrl);
 
         if (savedUrl) {
           fetchProviders(savedUrl, result[STORAGE_KEYS.AUTH_TOKEN] || '');
@@ -40,12 +43,17 @@ export function SettingsBar() {
   // Re-fetch when server URL changes
   useEffect(() => {
     const listener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
-      if (changes[STORAGE_KEYS.SERVER_URL]?.newValue) {
-        const newUrl = changes[STORAGE_KEYS.SERVER_URL].newValue;
+      if (changes[STORAGE_KEYS.SERVER_URL]?.newValue !== undefined) {
+        const newUrl = changes[STORAGE_KEYS.SERVER_URL].newValue || '';
         setServerUrl(newUrl);
-        chrome.storage.local.get(STORAGE_KEYS.AUTH_TOKEN, (r) => {
-          fetchProviders(newUrl, r[STORAGE_KEYS.AUTH_TOKEN] || '');
-        });
+        setServerUrlDraft(newUrl);
+        if (newUrl) {
+          chrome.storage.local.get(STORAGE_KEYS.AUTH_TOKEN, (r) => {
+            fetchProviders(newUrl, r[STORAGE_KEYS.AUTH_TOKEN] || '');
+          });
+        } else {
+          setProviders([]);
+        }
       }
     };
     chrome.storage.local.onChanged.addListener(listener);
@@ -86,6 +94,29 @@ export function SettingsBar() {
     setModel(newModel);
     chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: newModel });
   }, []);
+
+  /** Server URL 정규화 — trailing slash 제거 + 공백 정리. */
+  const _normalizeServerUrl = (input: string): string => {
+    const v = input.trim();
+    if (!v) return '';
+    return v.replace(/\/+$/, '');
+  };
+
+  const handleSaveServerUrl = useCallback(() => {
+    const normalized = _normalizeServerUrl(serverUrlDraft);
+    if (normalized === serverUrl) return;
+    if (normalized) {
+      try {
+        new URL(normalized);  // 형식 검증
+      } catch {
+        return;  // 잘못된 URL → 저장 안 함
+      }
+      chrome.storage.local.set({ [STORAGE_KEYS.SERVER_URL]: normalized });
+    } else {
+      // 빈 값 → storage에서 제거하고 다시 자동 감지에 맡김
+      chrome.storage.local.remove(STORAGE_KEYS.SERVER_URL);
+    }
+  }, [serverUrl, serverUrlDraft]);
 
   const currentProvider = providers.find((p) => p.provider === provider);
   const availableProviders = providers.filter((p) => p.available);
@@ -150,10 +181,36 @@ export function SettingsBar() {
             )}
           </div>
 
-          <div className="text-[10px] text-gray-400 truncate">
-            {serverUrl
-              ? serverUrl.replace(/^https?:\/\//, '')
-              : loading ? '서버 감지 중...' : 'XGEN 페이지를 열면 자동 감지'}
+          <div>
+            <label className="block text-[10px] uppercase tracking-wide text-gray-400 mb-1">
+              Server URL
+            </label>
+            <div className="flex gap-1">
+              <input
+                type="text"
+                value={serverUrlDraft}
+                onChange={(e) => setServerUrlDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveServerUrl();
+                }}
+                placeholder="http://localhost:8080"
+                className="flex-1 text-xs rounded border border-gray-200 bg-white text-gray-700 px-2 py-1.5 focus:outline-none focus:border-gray-400 min-w-0"
+              />
+              <button
+                onClick={handleSaveServerUrl}
+                disabled={_normalizeServerUrl(serverUrlDraft) === serverUrl}
+                className="text-xs px-2 py-1.5 rounded bg-gray-700 text-white disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-800 transition-colors"
+              >
+                저장
+              </button>
+            </div>
+            <div className="text-[10px] text-gray-400 mt-1 truncate">
+              {loading
+                ? '서버 감지 중...'
+                : serverUrl
+                  ? `현재: ${serverUrl.replace(/^https?:\/\//, '')}`
+                  : '비워두면 active 탭/저장된 토큰으로 자동 감지'}
+            </div>
           </div>
         </div>
       )}

@@ -78,11 +78,18 @@ chrome.runtime.onMessage.addListener(
         break;
       }
 
-      case 'SET_ORIGIN':
-        // SettingsBar UI 표시용 — API 호출에는 active tab origin 사용
-        chrome.storage.local.set({ [STORAGE_KEYS.SERVER_URL]: message.origin });
+      case 'SET_ORIGIN': {
+        // content script(token-extractor)에서 자동 호출되므로 origin이 정말 XGEN인지 검증.
+        // 검증 없이 받으면 fo.x2bee.com 같은 캡처 대상 사이트가 serverUrl을 덮어쓸 수 있음.
+        const origin = message.origin || '';
+        const isXgen =
+          /^https?:\/\/(xgen\.x2bee\.com|xgen\.[^/]+|[^/]+\.xgen\.x2bee\.com|localhost(:\d+)?|127\.0\.0\.1(:\d+)?)/.test(origin);
+        if (isXgen) {
+          chrome.storage.local.set({ [STORAGE_KEYS.SERVER_URL]: origin });
+        }
         sendResponse({ ok: true });
         break;
+      }
 
       case 'GET_CHAT_CONFIG': {
         // sidePanel이 SSE를 직접 소비하기 위해 필요한 config 반환

@@ -1,10 +1,14 @@
 import {
   API_CHAT_ENDPOINT,
+  API_COLLECTION_RUN,
   API_PATHFINDER_GREET,
   API_PATHFINDER_RESOLVE,
   API_PROVIDERS_ENDPOINT,
 } from './constants';
-import type { AiChatRequest, PathFinderEvent, SiteInfo, SSEEvent } from './types';
+import type {
+  AiChatRequest, CollectionRunEvent, CollectionRunRequest,
+  PathFinderEvent, SiteInfo, SSEEvent,
+} from './types';
 
 export interface ProviderInfo {
   provider: string;
@@ -75,6 +79,59 @@ export async function* streamChat(
 
       try {
         yield JSON.parse(data) as SSEEvent;
+      } catch {
+        // skip malformed JSON
+      }
+    }
+  }
+}
+
+// ── Collection: /run (Stage 1~4 통합 — NL → intent → plan → exec → response) ──
+
+export async function* streamCollectionRun(
+  serverUrl: string,
+  token: string,
+  collectionId: string,
+  body: CollectionRunRequest,
+  signal?: AbortSignal,
+): AsyncGenerator<CollectionRunEvent> {
+  const url = `${serverUrl}${API_COLLECTION_RUN(collectionId)}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`collection run error: ${response.status} ${response.statusText}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body');
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith('data: ')) continue;
+
+      const data = trimmed.slice(6);
+      try {
+        yield JSON.parse(data) as CollectionRunEvent;
       } catch {
         // skip malformed JSON
       }

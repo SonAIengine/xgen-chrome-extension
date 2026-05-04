@@ -3,6 +3,8 @@ export const API_CHAT_ENDPOINT = '/api/ai-chat/stream';
 export const API_PROVIDERS_ENDPOINT = '/api/ai-chat/providers';
 export const API_PATHFINDER_RESOLVE = '/api/pathfinder/resolve';
 export const API_PATHFINDER_GREET = '/api/pathfinder/greet';
+export const API_COLLECTION_RUN = (collectionId: string) =>
+  `/api/tools/api-collections/${encodeURIComponent(collectionId)}/run`;
 export const DEFAULT_PROVIDER = 'anthropic';
 export const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
 

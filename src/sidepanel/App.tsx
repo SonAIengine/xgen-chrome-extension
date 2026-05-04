@@ -22,7 +22,7 @@ export function App() {
   const {
     messages, isStreaming, sendMessage, stopStream, clearMessages,
     planQuestions, submitQuestionAnswers, dismissQuestions,
-    greetProactive,
+    greetProactive, collectionId, runCollection,
   } = useChat();
   const picker = useElementPicker();
   const captureSession = useCaptureSession();
@@ -258,7 +258,11 @@ export function App() {
             onChipClick={(chip) => {
               // 민감 chip은 자물쇠로 시각 표시만 — 실제 confirm은 plan 엔진의 step 직전에 처리.
               // (사용자 피드백: 시작 시점 confirm은 너무 이름. 결제·주문 step 직전에만 묻는다.)
-              sendMessage(chip.intent);
+              if (collectionId) {
+                runCollection(chip.intent, `🛠 ${chip.title}`, chip.title);
+              } else {
+                sendMessage(chip.intent);
+              }
             }}
           />
         ))}
@@ -275,7 +279,12 @@ export function App() {
       )}
 
       {/* Input */}
-      <InputArea onSend={sendMessage} onStop={stopStream} isStreaming={isStreaming} />
+      <InputArea
+        onSend={sendMessage}
+        onRunTool={collectionId ? runCollection : undefined}
+        onStop={stopStream}
+        isStreaming={isStreaming}
+      />
     </div>
   );
 }

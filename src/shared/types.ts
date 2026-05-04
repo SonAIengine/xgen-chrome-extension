@@ -35,6 +35,45 @@ export type PathFinderEvent =
   | { type: 'done' }
   | { type: 'error'; content: string };
 
+// ── Collection /run (NL → intent → plan → exec → response) ──
+
+export interface QuestionOption {
+  code: string;
+  label: string;
+}
+
+/** /run SSE 이벤트 — Stage 1~4 + Plan Runner 이벤트 통합. */
+export type CollectionRunEvent =
+  | { type: 'intent.parsed'; target?: string; entities?: Record<string, unknown> }
+  | { type: 'plan.synthesized'; plan?: { steps?: { id: string; tool: string; args?: Record<string, unknown> }[] } }
+  | {
+      type: 'question.required';
+      missing_field: string;
+      missing_semantic?: string;
+      field_type?: 'free' | 'enum' | 'from_producer';
+      options?: QuestionOption[];
+      current_entities?: Record<string, unknown>;
+      message?: string;
+      source_tool?: string;
+    }
+  | { type: 'plan.started'; plan_id?: string; goal?: string; step_count?: number }
+  | { type: 'step.started'; step_id: string; tool: string; args_resolved?: Record<string, unknown>; index?: number; total?: number }
+  | { type: 'step.completed'; step_id: string; tool: string; duration_ms?: number; output_preview?: unknown; output_size?: number }
+  | { type: 'step.failed'; step_id: string; tool: string; error?: { message?: string } & Record<string, unknown>; duration_ms?: number }
+  | { type: 'plan.completed'; plan_id?: string; output?: unknown; total_duration_ms?: number }
+  | { type: 'plan.aborted'; plan_id?: string; failed_step?: string; error?: { message?: string } & Record<string, unknown>; total_duration_ms?: number }
+  | { type: 'response.generated'; answer: string }
+  | { type: 'error'; stage?: string; message: string };
+
+export interface CollectionRunRequest {
+  requirement: string;
+  llm_spec?: string;
+  top_k?: number;
+  prior_entities?: Record<string, unknown>;
+  auth_token_override?: string;
+  base_url_override?: string;
+}
+
 // ── Chat Messages ──
 
 export interface ChatMessage {
@@ -53,6 +92,8 @@ export interface ChatMessage {
 export interface ToolCall {
   id: string;
   tool: string;
+  /** 사용자 노출용 친화 이름 (예: chip.title). 없으면 tool 사용. */
+  displayTool?: string;
   input: string;
   output?: string;
   status: 'running' | 'done' | 'error';

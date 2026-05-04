@@ -2,22 +2,38 @@ import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
 
 interface Props {
   onSend: (content: string) => void;
+  /** 슬래시 명령으로 collection /run 호출. collection 없으면 undefined → 평문 메시지로 폴백. */
+  onRunTool?: (requirement: string, displayLabel?: string, displayTool?: string) => void;
   onStop: () => void;
   isStreaming: boolean;
 }
 
-export function InputArea({ onSend, onStop, isStreaming }: Props) {
+export function InputArea({ onSend, onRunTool, onStop, isStreaming }: Props) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleSubmit = useCallback(() => {
     if (!value.trim() || isStreaming) return;
+
+    // "/" 로 시작하면 collection /run으로 — 사용자가 명시적으로 도구 호출 의도 표현.
+    // 인자/자연어는 /run의 Stage 1 LLM이 알아서 파싱.
+    const trimmed = value.trim();
+    if (onRunTool && trimmed.startsWith('/')) {
+      const requirement = trimmed.slice(1).trim();
+      if (requirement) {
+        onRunTool(requirement, trimmed);
+        setValue('');
+        if (textareaRef.current) textareaRef.current.style.height = 'auto';
+        return;
+      }
+    }
+
     onSend(value);
     setValue('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [value, isStreaming, onSend]);
+  }, [value, isStreaming, onSend, onRunTool]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
