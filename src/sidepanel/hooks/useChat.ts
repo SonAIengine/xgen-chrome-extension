@@ -360,8 +360,13 @@ export function useChat() {
     displayTool?: string;
     msgId: string;
     accumulatedEntities: Record<string, unknown>;
+    /** chip 클릭으로 시작된 run — Stage 1 LLM 우회. requirement는 chip 라벨일 뿐. */
+    forceTarget?: string;
     /** 같은 run 중 인증 안내를 이미 표시했는지 — 여러 step에서 401 떠도 한 번만. */
     authHintShown?: boolean;
+    /** step.started의 args_resolved + tool 이름 — 실행 실패 시 어떤 인자가 비었는지 역추적용. */
+    lastStepArgs?: Record<string, unknown>;
+    lastStepTool?: string;
   };
   type PendingQuestion = {
     missingField: string;
@@ -394,6 +399,25 @@ export function useChat() {
         ? `${config.provider}/${config.model}`
         : undefined;
 
+      // 사용자 현재 탭 host의 fresh 쿠키 수집 — 캡처 시점의 stale 쿠키 대신 사용.
+      // 호출 직전마다 새로 읽어서 사용자 세션이 갱신되면 자동 반영됨.
+      let liveCookies: string | undefined;
+      try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tabUrl = tabs[0]?.url;
+        if (tabUrl) {
+          const host = new URL(tabUrl).hostname;
+          const resp = await chrome.runtime.sendMessage({
+            type: 'GET_LIVE_COOKIES', host,
+          } satisfies ExtensionMessage);
+          if (resp?.ok && typeof resp.cookieHeader === 'string' && resp.cookieHeader) {
+            liveCookies = resp.cookieHeader;
+          }
+        }
+      } catch (err) {
+        console.warn('[useChat] live cookie collection failed:', err);
+      }
+
       abortRef.current = new AbortController();
 
       try {
@@ -402,9 +426,11 @@ export function useChat() {
           {
             requirement: run.requirement,
             ...(llm_spec ? { llm_spec } : {}),
+            ...(run.forceTarget ? { force_target: run.forceTarget } : {}),
             ...(Object.keys(run.accumulatedEntities).length
               ? { prior_entities: run.accumulatedEntities }
               : {}),
+            ...(liveCookies ? { live_cookies: liveCookies } : {}),
           },
           abortRef.current.signal,
         )) {
@@ -416,9 +442,38 @@ export function useChat() {
               console.log('[run] intent.parsed:', ev);
               break;
 
-            case 'plan.synthesized':
-              console.log('[run] plan.synthesized:', ev.plan);
+            case 'plan.synthesized': {
+              // 백엔드 synthesizer가 question.required를 안 띄웠는데도 plan에 빈 args가 박혀있는
+              // 경우 (e.g. parse_intent가 빈 값으로 채움) — 실행하면 4xx/5xx로 죽음.
+              // 능동적으로 잡아서 사용자한테 직접 물어본다.
+              const plan = ev.plan;
+              const missing = plan?.steps ? _findFirstMissingArgInPlan(plan) : null;
+              if (missing) {
+                console.log('[run] plan has missing arg, aborting + asking:', missing);
+                abortRef.current?.abort();
+                pendingQuestionRef.current = {
+                  missingField: missing.field,
+                  optionMap: {},
+                  isFreeText: true,
+                };
+                setPlanQuestions([{
+                  title: `"${missing.field}" 값이 필요해요`,
+                  type: 'single',
+                  options: [],
+                  allow_custom: true,  // 자유 입력 (popup의 "기타" 칸 활성)
+                  skippable: false,
+                }]);
+                appendAssistantTextTo(
+                  run.msgId,
+                  `\n_도구 \`${missing.tool}\` 호출에 \`${missing.field}\` 값이 필요해요. 입력해주세요._`,
+                );
+                // for-await는 abort로 자연스럽게 catch에 떨어짐.
+              } else {
+                // 항상 로깅 — backend가 args를 어떤 형태로 채우는지 디버깅 신호.
+                console.log('[run] plan.synthesized (no missing detected):', JSON.stringify(plan));
+              }
               break;
+            }
 
             case 'question.required': {
               // popup으로 전환. label↔code 매핑 보존해서 답변 시 entity로 변환.
@@ -452,6 +507,9 @@ export function useChat() {
               break;
 
             case 'step.started':
+              run.lastStepArgs = ev.args_resolved;
+              run.lastStepTool = ev.tool;
+              console.log('[run] step.started args_resolved:', ev.tool, ev.args_resolved);
               appendToolCallTo(run.msgId, {
                 id: ev.step_id,
                 tool: ev.tool,
@@ -464,39 +522,45 @@ export function useChat() {
             case 'step.completed': {
               const previewText = _previewToString(ev.output_preview);
               completeToolCallByIdIn(run.msgId, ev.step_id, previewText, 'done');
-              // 401/403: 백엔드 HTTP executor가 status 코드를 output에 묻어서 보냄.
-              // step.failed로 안 와서 별도 감지 필요.
-              if (!run.authHintShown && _looksLikeAuthError(previewText)) {
-                appendAssistantTextTo(
-                  run.msgId,
-                  '\n\n🔒 **호출에 인증/세션이 필요해요** (401/403).\n' +
-                  '비회원 기능이라도 사이트가 세션 쿠키로 식별하는 경우가 많은데, 호출 시 그 쿠키/토큰이 안 따라가서 막힌 거예요. ' +
-                  '상단 🔒 **"인증 프로필 생성"** 버튼으로 사이트의 인증 정보를 한 번 캡처해두면 다음부터 자동으로 주입됩니다.',
-                );
-                run.authHintShown = true;
-              }
+              maybeShowAuthHint(run, previewText);
               break;
             }
 
-            case 'step.failed':
-              completeToolCallByIdIn(run.msgId, ev.step_id, ev.error?.message ?? 'failed', 'error');
+            case 'step.failed': {
+              const errMsg = ev.error?.message ?? 'failed';
+              completeToolCallByIdIn(run.msgId, ev.step_id, errMsg, 'error');
+              if (maybeShowAuthHint(run, errMsg)) break;
+              // HTTP 에러 + step args가 의심스러우면 popup으로 사용자에게 직접 입력받기.
+              maybeAskForMissingArg(run, errMsg);
               break;
+            }
 
             case 'plan.completed':
               // response.generated 가 곧 도착하므로 여기선 noop.
               break;
 
-            case 'plan.aborted':
-              appendAssistantTextTo(run.msgId, `\n⚠️ 실행 중단: ${ev.error?.message ?? 'unknown'}`);
+            case 'plan.aborted': {
+              const errMsg = ev.error?.message ?? 'unknown';
+              if (maybeShowAuthHint(run, errMsg)) break;
+              if (!maybeAskForMissingArg(run, errMsg)) {
+                appendAssistantTextTo(run.msgId, `\n⚠️ 실행 중단: ${errMsg}`);
+              }
               break;
+            }
 
             case 'response.generated':
               // 최종 NL 답변 — assistant 메시지 본문에 추가.
+              // 단, popup이 이미 떠있으면(사용자한테 입력 받는 중) Stage 4의 사과 답변은
+              // 노이즈만 됨 — 사용자가 popup 답하면 곧 재호출되니까. 스킵.
+              if (pendingQuestionRef.current) break;
               if (ev.answer) appendAssistantTextTo(run.msgId, ev.answer);
               break;
 
             case 'error':
-              appendAssistantTextTo(run.msgId, `\n⚠️ ${ev.stage ? `[${ev.stage}] ` : ''}${ev.message}`);
+              if (maybeShowAuthHint(run, ev.message)) break;
+              if (!maybeAskForMissingArg(run, ev.message)) {
+                appendAssistantTextTo(run.msgId, `\n⚠️ ${ev.stage ? `[${ev.stage}] ` : ''}${ev.message}`);
+              }
               break;
           }
         }
@@ -513,9 +577,15 @@ export function useChat() {
     [collectionId],
   );
 
-  /** 새 run 시작 — chip 클릭 / 슬래시 / 향후 자연어. */
+  /** 새 run 시작 — chip 클릭 / 슬래시 / 향후 자연어.
+   *  forceTarget이 주어지면 backend Stage 1 LLM 우회 (chip 클릭에서 사용). */
   const runCollection = useCallback(
-    async (requirement: string, displayLabel?: string, displayTool?: string) => {
+    async (
+      requirement: string,
+      displayLabel?: string,
+      displayTool?: string,
+      forceTarget?: string,
+    ) => {
       if (isStreaming) return;
       if (!requirement.trim()) return;
       if (!collectionId) {
@@ -545,6 +615,7 @@ export function useChat() {
       activeRunRef.current = {
         requirement,
         displayTool,
+        forceTarget,
         msgId: assistantMsgId,
         accumulatedEntities: {},
       };
@@ -561,6 +632,67 @@ export function useChat() {
     },
     [collectionId, isStreaming, _runOnce],
   );
+
+  /**
+   * HTTP 에러를 사용자 입력으로 회복 시도. 우선순위로 target 필드 결정:
+   *   0) 백엔드 tool_executor의 명시적 "Missing path parameter(s): X" — 가장 확실
+   *   1) args 안 빈/placeholder 필드
+   *   2) 1번 못 찾았는데 HTTP 에러면 — 패스 (애매하면 자동 popup 안 띄움. 진짜 서버 에러일 수도)
+   * 한 run에서 popup이 이미 떠있으면 중복 setState 방지 — true 반환해서 raw 메시지 막음.
+   */
+  function maybeAskForMissingArg(run: ActiveRun, errText: string | undefined): boolean {
+    if (!errText) return false;
+    // 백엔드 tool_executor가 사전검증으로 보낸 메시지 — HTTP 에러 패턴 체크 전에 우선 잡음.
+    // "Missing path parameter(s): X" / "parameters:" / "parameter:" 모두 수용.
+    const missingPathMatch = errText.match(/Missing\s+path\s+parameter(?:s|\(s\))?:?\s*([^\s,)]+)/i);
+    const isHttpError = /HTTP\s+(?:Error\s+)?\d{3}/i.test(errText);
+    if (!missingPathMatch && !isHttpError) return false;
+    if (pendingQuestionRef.current) return true;
+
+    let target: string | null = missingPathMatch ? missingPathMatch[1] : null;
+    if (!target) target = _findSuspiciousArg(run.lastStepArgs);
+    if (!target) return false;
+
+    pendingQuestionRef.current = {
+      missingField: target,
+      optionMap: {},
+      isFreeText: true,
+    };
+    setPlanQuestions([{
+      title: `"${target}" 값을 알려주세요. 호출이 실패했어요.`,
+      type: 'single',
+      options: [],
+      allow_custom: true,
+      skippable: false,
+    }]);
+    appendAssistantTextTo(
+      run.msgId,
+      `\n_도구 \`${run.lastStepTool ?? ''}\` 호출 실패 — \`${target}\` 값이 필요해요. 입력하시면 다시 시도합니다._`,
+    );
+    return true;
+  }
+
+  /**
+   * 401/403 패턴이면 친절한 안내를 한 번 표시하고 true 반환. 호출자는 raw 에러를
+   * 띄우지 말지 결정 가능. 한 run 동안 1회만 노출 (run.authHintShown 플래그).
+   */
+  function maybeShowAuthHint(run: ActiveRun, errText: string | undefined): boolean {
+    if (!errText || !_looksLikeAuthError(errText)) return false;
+    if (run.authHintShown) return true;  // 이미 안내함 — raw 추가 출력만 막기
+    appendAssistantTextTo(
+      run.msgId,
+      '\n\n⚠️ **호출이 거절됐어요** (401/403 또는 HTML 응답).\n' +
+      '두 가지 가능성이 있어요:\n\n' +
+      '**1. 진짜 인증이 필요한 경우** (회원/세션 필요한 API)\n' +
+      '→ 상단 🔒 **"인증 프로필 생성"** 버튼으로 로그인 정보를 캡처하세요.\n' +
+      '이미 만들었는데도 막히면 도구를 재캡처(우클릭 → API 스캔)해서 프로필과 다시 매칭하세요.\n\n' +
+      '**2. 비회원도 되는 API인데 서버가 막은 경우** (CSRF/Origin 검사 등)\n' +
+      '→ 사이트가 자기 도메인 외부 요청은 차단하는 패턴. 이 경우 백엔드 보안 정책 때문이라 ' +
+      '같은 사이트 내 페이지에서 시도하거나, 도구를 다른 형태로 등록해야 할 수 있어요.',
+    );
+    run.authHintShown = true;
+    return true;
+  }
 
   function appendAssistantTextTo(msgId: string, text: string) {
     setMessages((prev) =>
@@ -609,14 +741,33 @@ export function useChat() {
           setIsStreaming(false);
           return;
         }
-        // popup이 ", "로 join하므로 첫 항목만 사용 (single 타입).
         const firstLabel = raw.split(', ')[0];
-        const value = pending.optionMap[firstLabel] ?? raw;  // 매칭 실패 시 원문 사용
+        const value = pending.optionMap[firstLabel] ?? raw;
         run.accumulatedEntities = { ...run.accumulatedEntities, [pending.missingField]: value };
         pendingQuestionRef.current = null;
 
-        // 사용자 답변을 채팅에 user 메시지로 표시.
-        appendAssistantTextTo(run.msgId, `\n_사용자 답변_: \`${pending.missingField}\` = ${firstLabel}\n`);
+        // 사용자 답변을 별도 user 메시지로 추가 + 재호출용 새 assistant 메시지 생성.
+        // 한 메시지에 여러 단계가 누적되면 가독성 떨어져서 매 라운드 분리.
+        const newAssistantId = crypto.randomUUID();
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'user',
+            content: `${pending.missingField}: ${firstLabel}`,
+            timestamp: Date.now(),
+          },
+          {
+            id: newAssistantId,
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+            toolCalls: [],
+          },
+        ]);
+        run.msgId = newAssistantId;
+        // 새 라운드 시작이므로 인증 안내 플래그 리셋 (이전 라운드와 분리).
+        run.authHintShown = false;
 
         try {
           await _runOnce(run);
@@ -664,6 +815,52 @@ function _previewToString(preview: unknown): string {
   } catch {
     return String(preview);
   }
+}
+
+/**
+ * Plan 의 첫 step에서 빈 값(null/undefined/"")인 인자 필드를 찾아 반환.
+ * 백엔드 synthesizer가 미해결 entity를 빈 값으로 채워 그대로 실행되는 케이스를 잡는 안전망.
+ * 바인딩 표현식("${s1.body.id}" 같은 placeholder)은 다음 step의 binding이므로 통과.
+ */
+function _findFirstMissingArgInPlan(
+  plan: { steps?: { tool: string; args?: Record<string, unknown> }[] },
+): { tool: string; field: string } | null {
+  for (const step of plan.steps || []) {
+    const found = _findSuspiciousArg(step.args);
+    if (found) return { tool: step.tool, field: found };
+  }
+  return null;
+}
+
+/**
+ * args dict에서 "비어있거나 미해결로 보이는" 첫 필드 키를 반환.
+ * - null/undefined
+ * - 빈 문자열
+ * - placeholder string ("${...}", "{key}")
+ * 중첩 객체는 재귀로 검사하되 dotted path("a.b")로 반환.
+ */
+function _findSuspiciousArg(
+  args: Record<string, unknown> | undefined,
+  prefix = '',
+): string | null {
+  if (!args || typeof args !== 'object') return null;
+  for (const [k, v] of Object.entries(args)) {
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (v === null || v === undefined) return path;
+    if (typeof v === 'string') {
+      const s = v.trim();
+      if (s === '') return path;
+      // backend가 binding/placeholder 그대로 보낸 케이스
+      if (/^\$\{.+\}$/.test(s)) return path;
+      if (/^\{[A-Za-z_][\w-]*\}$/.test(s)) return path;
+      continue;
+    }
+    if (typeof v === 'object' && !Array.isArray(v)) {
+      const nested = _findSuspiciousArg(v as Record<string, unknown>, path);
+      if (nested) return nested;
+    }
+  }
+  return null;
 }
 
 /** step output preview에서 401/403 패턴 감지. 백엔드는 `{"status": 401, "error": "Unauthorized", ...}` 형태로 보냄. */

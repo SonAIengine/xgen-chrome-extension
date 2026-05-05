@@ -28,7 +28,7 @@ export function mainWorldHookFunction() {
     return false;
   }
 
-  /** HTML 응답은 API가 아닌 페이지 요청이므로 캡처 제외 */
+  /** HTML/RSC/정적 자원 응답은 API가 아니라 페이지 요청이므로 캡처 제외 */
   function shouldSkipResponse(contentType: string): boolean {
     if (!contentType) return false;
     const ct = contentType.toLowerCase();
@@ -36,6 +36,12 @@ export function mainWorldHookFunction() {
     if (ct.includes('text/css')) return true;
     if (ct.includes('image/')) return true;
     if (ct.includes('font/')) return true;
+    // Next.js RSC (React Server Component) payload — SPA 내부 navigation 시
+    // 페이지 라우트에 발사되는 fetch지만 데이터 API가 아님. 호출해도 우리 백엔드에서는
+    // RSC 헤더 못 만들어 일반 HTML이 옴.
+    if (ct.includes('text/x-component')) return true;
+    // 일부 SSR 프레임워크가 RSC를 multipart 형식으로 반환
+    if (ct.includes('multipart/x-component')) return true;
     return false;
   }
 

@@ -55,11 +55,50 @@ interface CaptureSession {
 let activeCaptureSession: CaptureSession | null = null;
 const CAPTURE_SESSION_MAX = 500; // FIFO 상한 — 5분 무활동 자동종료는 Phase 2에서 추가
 
+// 캡처 종료 후 sidepanel이 mount되기 전 broadcast가 발사되는 race를 막기 위한 캐시.
+// sidepanel이 GET_CAPTURE_RESULT로 한 번 가져가면 null로 소비.
+let cachedCaptureResult: {
+  apis: CapturedApi[];
+  tabId: number;
+  durationMs: number;
+} | null = null;
+
 // ── Side Panel open on icon click ──
 
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch(console.error);
+
+/**
+ * origin이 XGEN 자체 호스트인지 — 이걸로 SET_ORIGIN/SET_TOKEN/resolver/startup migration 모두 검증.
+ * fo.x2bee.com 같은 형제 서브도메인이 storage/메모리/resolver에 끼어들지 못하게 막는 single source of truth.
+ */
+function isXgenOrigin(origin: string): boolean {
+  return /^https?:\/\/(xgen\.x2bee\.com|xgen\.[^/:]+|[^/:]+\.xgen\.x2bee\.com|localhost(:\d+)?|127\.0\.0\.1(:\d+)?)(\/|$)/.test(origin);
+}
+
+// ── Startup: migrate stale storage from earlier buggy versions ──
+// 과거 버그로 들어온 비-XGEN serverUrl / token:* 키를 정리. 사용자가 storage 직접 손대지 않아도 됨.
+chrome.storage.local.get(null, (items) => {
+  const toRemove: string[] = [];
+  const stored = items[STORAGE_KEYS.SERVER_URL] as string | undefined;
+  if (stored && !isXgenOrigin(stored)) {
+    toRemove.push(STORAGE_KEYS.SERVER_URL);
+    console.warn('[XGEN SW] Removing stale non-XGEN serverUrl:', stored);
+  }
+  for (const key of Object.keys(items)) {
+    if (key.startsWith('token:')) {
+      const origin = key.slice(6);
+      if (!isXgenOrigin(origin)) {
+        toRemove.push(key);
+        console.warn('[XGEN SW] Removing stale non-XGEN token key:', key);
+      }
+    }
+  }
+  if (toRemove.length > 0) {
+    chrome.storage.local.remove(toRemove);
+  }
+});
 
 // ── Message handling ──
 
@@ -68,23 +107,22 @@ chrome.runtime.onMessage.addListener(
     switch (message.type) {
       case 'SET_TOKEN': {
         const origin = message.origin || sender.origin || '';
-        if (origin) {
+        // SET_ORIGIN과 동일하게 XGEN origin만 토큰 저장 — fo.x2bee.com 등 형제 서브도메인이
+        // 자기 토큰을 우리 storage에 영구 박아넣지 못하게.
+        if (origin && isXgenOrigin(origin)) {
           tokensByOrigin[origin] = message.token;
           chrome.storage.local.set({ [`token:${origin}`]: message.token });
+          // SettingsBar 호환: 마지막 토큰을 기본값으로도 저장 (XGEN 토큰만)
+          chrome.storage.local.set({ [STORAGE_KEYS.AUTH_TOKEN]: message.token });
         }
-        // SettingsBar 호환: 마지막 토큰을 기본값으로도 저장
-        chrome.storage.local.set({ [STORAGE_KEYS.AUTH_TOKEN]: message.token });
         sendResponse({ ok: true });
         break;
       }
 
       case 'SET_ORIGIN': {
         // content script(token-extractor)에서 자동 호출되므로 origin이 정말 XGEN인지 검증.
-        // 검증 없이 받으면 fo.x2bee.com 같은 캡처 대상 사이트가 serverUrl을 덮어쓸 수 있음.
         const origin = message.origin || '';
-        const isXgen =
-          /^https?:\/\/(xgen\.x2bee\.com|xgen\.[^/]+|[^/]+\.xgen\.x2bee\.com|localhost(:\d+)?|127\.0\.0\.1(:\d+)?)/.test(origin);
-        if (isXgen) {
+        if (isXgenOrigin(origin)) {
           chrome.storage.local.set({ [STORAGE_KEYS.SERVER_URL]: origin });
         }
         sendResponse({ ok: true });
@@ -243,8 +281,7 @@ chrome.runtime.onMessage.addListener(
             // FIFO: 오래된 것 버림
             activeCaptureSession.captures.shift();
           }
-          broadcastToSidePanel({
-            type: 'CAPTURE_SESSION_STATUS',
+          broadcastCaptureStatus({
             active: true,
             tabId: activeCaptureSession.tabId,
             count: activeCaptureSession.captures.length,
@@ -273,17 +310,13 @@ chrome.runtime.onMessage.addListener(
           // content script가 아직 hook 주입 안 됐다면 주입 (ELEMENT_PICKER_STOP과 동일한 진입점 재사용).
           // 부수효과로 capturedApisByTab[tabId]가 리셋되지만 session 버퍼는 별도라 영향 없음.
           await handlePickerHookInject(tabId).catch(() => {});
-          broadcastToSidePanel({
-            type: 'CAPTURE_SESSION_STATUS',
-            active: true,
-            tabId,
-            count: 0,
-          });
+          broadcastCaptureStatus({ active: true, tabId, count: 0 });
           sendResponse({ ok: true, tabId });
         })();
         return true;
       }
 
+      case 'STOP_FLOATING_CAPTURE':
       case 'STOP_CAPTURE_SESSION': {
         if (!activeCaptureSession) {
           sendResponse({ ok: false, error: 'No active session' });
@@ -291,18 +324,67 @@ chrome.runtime.onMessage.addListener(
         }
         const session = activeCaptureSession;
         activeCaptureSession = null;
-        broadcastToSidePanel({
-          type: 'CAPTURE_SESSION_STATUS',
-          active: false,
+
+        // 1. 사이드패널 즉시 열기 (await 전에) — overlay 클릭으로 전달된 user gesture가
+        //    살아있는 동안 호출해야 한다. await/setOptions 끼면 gesture 끊겨서 무음 실패.
+        chrome.sidePanel.open({ tabId: session.tabId }).catch((err) => {
+          console.warn('[XGEN SW] sidePanel.open on stop failed:', err);
         });
+
+        // 2. 결과 캐시 — sidepanel이 mount되기 전에 broadcast가 끝나는 race를 막기 위해.
+        //    sidepanel 첫 mount 시 GET_CAPTURE_RESULT로 직접 query.
+        cachedCaptureResult = {
+          apis: session.captures,
+          tabId: session.tabId,
+          durationMs: Date.now() - session.startedAt,
+        };
+
+        // 3. STATUS 브로드캐스트 — sidepanel + 캡처 탭(overlay 자동 hide).
+        broadcastCaptureStatus({ active: false, tabId: session.tabId });
+        // 4. 이미 열려있던 sidepanel을 위해 결과 브로드캐스트 (놓쳐도 cachedCaptureResult가 안전망).
         broadcastToSidePanel({
           type: 'CAPTURE_SESSION_RESULT',
           apis: session.captures,
           tabId: session.tabId,
           durationMs: Date.now() - session.startedAt,
         });
+
         sendResponse({ ok: true, count: session.captures.length });
         break;
+      }
+
+      case 'GET_CAPTURE_RESULT': {
+        // sidepanel이 STOP 이후 새로 열린 경우 broadcast를 놓쳤으니 직접 가져감.
+        // 한 번 읽으면 소비 (다음 mount 시 재노출 방지).
+        const result = cachedCaptureResult;
+        cachedCaptureResult = null;
+        sendResponse({ ok: true, result });
+        break;
+      }
+
+      case 'GET_LIVE_COOKIES': {
+        // 사용자 브라우저가 그 host에 대해 들고있는 fresh 쿠키를 모두 모아 Cookie 헤더 문자열로
+        // 변환. 캡처 시점의 stale 쿠키 대신 호출 시점의 살아있는 세션 사용. host_permissions
+        // <all_urls>가 manifest에 있어서 어떤 host든 읽기 가능.
+        (async () => {
+          try {
+            const cookies = await chrome.cookies.getAll({ domain: message.host });
+            // 같은 이름이 여러 path에 걸려있으면 longest-path가 일반적으로 우선 — 단순화 위해
+            // 첫 발견 우선. 도메인은 .x2bee.com과 fo.x2bee.com 둘 다 들어옴 (chrome 동작).
+            const seen = new Set<string>();
+            const parts: string[] = [];
+            for (const c of cookies) {
+              if (seen.has(c.name)) continue;
+              seen.add(c.name);
+              parts.push(`${c.name}=${c.value}`);
+            }
+            sendResponse({ ok: true, cookieHeader: parts.join('; '), count: cookies.length });
+          } catch (err) {
+            console.warn('[XGEN SW] GET_LIVE_COOKIES failed:', err);
+            sendResponse({ ok: false, error: String(err) });
+          }
+        })();
+        return true;  // async response
       }
 
       // ── Sidepanel → SW 직접 PAGE_COMMAND (register_tool 등) ──
@@ -363,7 +445,11 @@ chrome.runtime.onMessage.addListener(
 chrome.storage.local.get(null, (items) => {
   for (const [key, value] of Object.entries(items)) {
     if (key.startsWith('token:') && typeof value === 'string') {
-      tokensByOrigin[key.slice(6)] = value; // "token:https://xgen..." → origin
+      const origin = key.slice(6);
+      // XGEN origin만 메모리에 로드. (storage 자체는 위 startup migration이 청소)
+      if (isXgenOrigin(origin)) {
+        tokensByOrigin[origin] = value;
+      }
     }
   }
 });
@@ -385,31 +471,29 @@ async function getOriginFromTab(): Promise<string | null> {
 }
 
 /**
- * XGEN 서버 URL을 결정한다.
+ * XGEN 서버 URL을 결정한다. 모든 단계에서 isXgenOrigin으로 검증 — 비-XGEN origin은 절대 반환 X.
+ *
  * 1순위: 토큰이 있는 XGEN origin (메모리 캐시)
- * 2순위: storage에 저장된 serverUrl
+ * 2순위: storage에 저장된 serverUrl (단, XGEN origin인지 검증)
  * 3순위: active tab의 origin (XGEN 페이지인 경우)
  */
 async function resolveXgenServerUrl(): Promise<string | null> {
-  // 1순위: active tab의 origin (사용자가 보고 있는 페이지 우선)
+  // 1순위: active tab의 origin
   const tabOrigin = await getOriginFromTab();
-  if (tabOrigin) {
-    // localhost거나 xgen 사이트면 해당 origin 사용
-    const isLocal = tabOrigin.includes('localhost') || tabOrigin.includes('127.0.0.1');
-    const isXgen = tabOrigin.includes('xgen');
-    if (isLocal || isXgen) return tabOrigin;
-  }
+  if (tabOrigin && isXgenOrigin(tabOrigin)) return tabOrigin;
 
-  // 2순위: storage에 저장된 서버 URL
+  // 2순위: storage에 저장된 서버 URL — 반드시 XGEN origin이어야 함.
+  // 이전 버그로 fo.x2bee.com 같은 게 저장돼있을 수 있어서 startup migration이 청소하지만
+  // 런타임에서도 한 번 더 가드.
   const stored = await chrome.storage.local.get(STORAGE_KEYS.SERVER_URL);
   const storedUrl = stored[STORAGE_KEYS.SERVER_URL] as string | undefined;
-  if (storedUrl) {
+  if (storedUrl && isXgenOrigin(storedUrl)) {
     const token = await getStoredToken(storedUrl);
     if (token) return storedUrl;
   }
 
-  // 3순위: 토큰이 있는 xgen origin (fallback)
-  const xgenOrigin = Object.keys(tokensByOrigin).find((o) => o.includes('xgen'));
+  // 3순위: 토큰이 있는 XGEN origin (메모리)
+  const xgenOrigin = Object.keys(tokensByOrigin).find((o) => isXgenOrigin(o));
   if (xgenOrigin) return xgenOrigin;
 
   return null;
@@ -638,6 +722,189 @@ async function postCommandResultToBackend(
 
 function broadcastToSidePanel(message: ExtensionMessage) {
   chrome.runtime.sendMessage(message).catch(() => {});
+}
+
+/**
+ * CAPTURE_SESSION_STATUS를 sidepanel과 (지정된) 탭 content script 둘 다로 전달.
+ * 플로팅 overlay가 count/active 상태를 직접 보려면 tab 쪽으로도 보내야 한다.
+ */
+function broadcastCaptureStatus(payload: {
+  active: boolean;
+  tabId?: number;
+  count?: number;
+}) {
+  const msg: ExtensionMessage = { type: 'CAPTURE_SESSION_STATUS', ...payload };
+  broadcastToSidePanel(msg);
+  if (payload.tabId !== undefined) {
+    chrome.tabs.sendMessage(payload.tabId, msg).catch(() => {});
+  }
+}
+
+/** 외부 사이트에서만 우클릭 메뉴 노출 — XGEN/localhost는 의미 없음. */
+function isCapturableHost(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    if (!/^https?:$/.test(u.protocol)) return false;
+    const h = u.hostname;
+    if (h === 'xgen.x2bee.com' || h.startsWith('xgen.') || h.endsWith('.xgen.x2bee.com')) return false;
+    if (h === 'localhost' || h === '127.0.0.1') return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ── Context Menu: 우클릭 → API 스캔 ──
+const CTX_MENU_ID = 'xgen-api-scan';
+
+chrome.runtime.onInstalled.addListener(() => {
+  // 이전 항목이 있으면 제거 후 재생성 (개발 시 reload 안전).
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: CTX_MENU_ID,
+      title: 'XGEN: API 스캔 시작',
+      contexts: ['page', 'frame', 'selection', 'link', 'image'],
+      // documentUrlPatterns가 부정 매치를 못하므로, 클릭 시점에 isCapturableHost로 필터.
+      documentUrlPatterns: ['*://*/*'],
+    });
+  });
+});
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId !== CTX_MENU_ID) return;
+  if (!tab?.id) return;
+
+  const url = tab.url || info.pageUrl || '';
+  if (!isCapturableHost(url)) {
+    // XGEN/로컬 페이지에선 의미 없음 — 조용히 무시.
+    return;
+  }
+
+  // 이미 다른 탭에서 캡처 중이면 우선 종료. (단순화: 동시 1개 세션만)
+  if (activeCaptureSession && activeCaptureSession.tabId !== tab.id) {
+    const prev = activeCaptureSession;
+    activeCaptureSession = null;
+    broadcastCaptureStatus({ active: false, tabId: prev.tabId });
+    chrome.tabs.sendMessage(prev.tabId, { type: 'HIDE_FLOATING_OVERLAY' }).catch(() => {});
+  }
+
+  // Start 단계에서는 사이드패널을 열지 않는다 — 페이지 시야 확보가 우선.
+  // 사이드패널은 정지 시(STOP_FLOATING_CAPTURE 핸들러)에 열어서 결과 리스트를 보여준다.
+
+  // 캡처 세션 시작 — 기존 START_CAPTURE_SESSION 로직과 동일.
+  activeCaptureSession = { tabId: tab.id, startedAt: Date.now(), captures: [] };
+  await handlePickerHookInject(tab.id).catch(() => {});
+
+  // overlay 표시 — content script가 안 떠있는 탭(확장 reload 후 기존 탭)에서도 동작하도록
+  // tabs.sendMessage 실패하면 scripting.executeScript로 직접 주입.
+  await showFloatingOverlayOnTab(tab.id);
+  broadcastCaptureStatus({ active: true, tabId: tab.id, count: 0 });
+});
+
+/**
+ * 탭에 floating overlay 표시. content script가 이미 주입돼있으면 그쪽 listener가
+ * SHOW_FLOATING_OVERLAY를 받아 띄움. 아니면 chrome.scripting.executeScript로 페이지에
+ * 인라인 overlay 주입 (count 갱신은 chrome.runtime.onMessage listener도 같이 등록).
+ */
+async function showFloatingOverlayOnTab(tabId: number): Promise<void> {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'SHOW_FLOATING_OVERLAY' });
+    return;
+  } catch {
+    // content script not loaded — fall through to scripting injection
+  }
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: false },
+      func: _injectFloatingOverlayInline,
+    });
+  } catch (err) {
+    console.warn('[XGEN SW] floating overlay scripting fallback failed:', err);
+  }
+}
+
+/**
+ * scripting.executeScript용 — page isolated world에서 실행. 호스트 페이지에 overlay 주입 +
+ * STOP 클릭/STATUS 갱신/HIDE 처리 로직을 모두 인라인으로 가짐. content script가 떠있으면
+ * 중복 주입 방지(id 체크).
+ */
+function _injectFloatingOverlayInline(): void {
+  const HOST_ID = '__xgen_floating_overlay__';
+  if (document.getElementById(HOST_ID)) return;
+
+  const host = document.createElement('div');
+  host.id = HOST_ID;
+  host.style.cssText = 'all:initial;position:fixed;top:0;right:0;z-index:2147483647;';
+
+  const shadow = host.attachShadow({ mode: 'closed' });
+  shadow.innerHTML = `
+    <style>
+      :host { all: initial; }
+      .root {
+        position: fixed; top: 16px; right: 16px;
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 12px;
+        background: #1f2937; color: #fff;
+        border-radius: 999px;
+        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+      }
+      .dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: #ef4444;
+        animation: xgen-pulse 1.4s infinite;
+      }
+      @keyframes xgen-pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(0.85); }
+      }
+      .count {
+        background: rgba(255, 255, 255, 0.15);
+        padding: 2px 8px; border-radius: 999px;
+        min-width: 20px; text-align: center;
+      }
+      .stop {
+        all: unset; cursor: pointer;
+        width: 22px; height: 22px;
+        display: inline-flex; align-items: center; justify-content: center;
+        background: rgba(255, 255, 255, 0.12);
+        border-radius: 50%;
+      }
+      .stop:hover { background: #ef4444; }
+    </style>
+    <div class="root">
+      <span class="dot"></span>
+      <span>API 녹화 중</span>
+      <span class="count">0</span>
+      <button class="stop" type="button" title="정지">
+        <svg viewBox="0 0 14 14" fill="currentColor" width="10" height="10">
+          <rect x="1" y="1" width="12" height="12" rx="2"/>
+        </svg>
+      </button>
+    </div>
+  `;
+
+  const stopBtn = shadow.querySelector('.stop') as HTMLButtonElement | null;
+  const countEl = shadow.querySelector('.count') as HTMLSpanElement | null;
+
+  stopBtn?.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'STOP_FLOATING_CAPTURE' });
+  });
+
+  // SW가 broadcast하는 STATUS를 받아 count 갱신 + active=false면 자체 제거.
+  const onMsg = (msg: { type?: string; active?: boolean; count?: number }) => {
+    if (msg?.type !== 'CAPTURE_SESSION_STATUS') return;
+    if (msg.active === false) {
+      chrome.runtime.onMessage.removeListener(onMsg);
+      host.remove();
+    } else if (typeof msg.count === 'number' && countEl) {
+      countEl.textContent = String(msg.count);
+    }
+  };
+  chrome.runtime.onMessage.addListener(onMsg);
+
+  (document.documentElement || document.body).appendChild(host);
 }
 
 // ── API Hook: page_command 액션 처리 ──
@@ -1341,10 +1608,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   capturedApisByTab.delete(tabId);
   aiDrivingTabIds.delete(tabId);
   if (activeCaptureSession?.tabId === tabId) {
-    // 세션 중인 탭이 닫혔으면 그 시점까지의 캡처를 사이드패널로 보내고 세션 종료
+    // 세션 중인 탭이 닫혔으면 그 시점까지의 캡처를 사이드패널로 보내고 세션 종료.
+    // 탭이 이미 사라졌으니 tabs.sendMessage는 fail하지만 broadcastCaptureStatus가 catch.
     const session = activeCaptureSession;
     activeCaptureSession = null;
-    broadcastToSidePanel({ type: 'CAPTURE_SESSION_STATUS', active: false });
+    broadcastCaptureStatus({ active: false, tabId: session.tabId });
     broadcastToSidePanel({
       type: 'CAPTURE_SESSION_RESULT',
       apis: session.captures,

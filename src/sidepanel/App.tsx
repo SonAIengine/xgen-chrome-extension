@@ -257,9 +257,15 @@ export function App() {
             message={msg}
             onChipClick={(chip) => {
               // 민감 chip은 자물쇠로 시각 표시만 — 실제 confirm은 plan 엔진의 step 직전에 처리.
-              // (사용자 피드백: 시작 시점 confirm은 너무 이름. 결제·주문 step 직전에만 묻는다.)
+              // chip.tool_name이 있으면 force_target으로 보내서 backend Stage 1 LLM 우회.
+              // (LLM이 chip.intent 라벨에서 환상 entity 만드는 문제 차단)
               if (collectionId) {
-                runCollection(chip.intent, `🛠 ${chip.title}`, chip.title);
+                runCollection(
+                  chip.intent,
+                  `🛠 ${chip.title}`,
+                  chip.title,
+                  chip.tool_name,
+                );
               } else {
                 sendMessage(chip.intent);
               }

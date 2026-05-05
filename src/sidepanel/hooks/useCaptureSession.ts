@@ -38,6 +38,21 @@ export function useCaptureSession(): CaptureSessionState {
       }
     };
     chrome.runtime.onMessage.addListener(listener);
+
+    // 사이드패널이 stop 이후에 처음 열린 케이스 — 그때는 broadcast를 놓쳤으니
+    // SW에 캐시된 결과를 직접 query. 한 번 읽으면 SW가 소비(null)해서 재마운트 시
+    // 옛 결과가 다시 노출되지 않는다.
+    chrome.runtime
+      .sendMessage({ type: 'GET_CAPTURE_RESULT' } satisfies ExtensionMessage)
+      .then((resp: { ok?: boolean; result?: SessionResult | null } | undefined) => {
+        if (resp?.result) {
+          setActive(false);
+          setCount(0);
+          setResult(resp.result);
+        }
+      })
+      .catch(() => {});
+
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 

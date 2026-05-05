@@ -70,6 +70,11 @@ export interface CollectionRunRequest {
   llm_spec?: string;
   top_k?: number;
   prior_entities?: Record<string, unknown>;
+  /** chip 클릭처럼 target tool이 이미 결정된 경우. 백엔드는 Stage 1 LLM 우회. */
+  force_target?: string;
+  /** 호출 시점에 사용자 브라우저가 들고있는 fresh 쿠키 헤더 ("name=value; name2=value2").
+   *  캡처된 stale 쿠키 대신 이걸 우선 사용 → 세션/로그인 상태가 항상 사용자 화면과 동기. */
+  live_cookies?: string;
   auth_token_override?: string;
   base_url_override?: string;
 }
@@ -208,4 +213,15 @@ export type ExtensionMessage =
   | { type: 'START_CAPTURE_SESSION' }
   | { type: 'STOP_CAPTURE_SESSION' }
   | { type: 'CAPTURE_SESSION_STATUS'; active: boolean; tabId?: number; count?: number }
-  | { type: 'CAPTURE_SESSION_RESULT'; apis: import('./api-hook-types').CapturedApi[]; tabId: number; durationMs: number };
+  | { type: 'CAPTURE_SESSION_RESULT'; apis: import('./api-hook-types').CapturedApi[]; tabId: number; durationMs: number }
+  /** sidepanel이 stop 이후에 처음 열렸을 때 SW에 캐시된 마지막 결과를 직접 가져오기 위한 query. */
+  | { type: 'GET_CAPTURE_RESULT' }
+  /** 특정 host의 현재 살아있는 쿠키를 SW에서 chrome.cookies API로 읽어 반환.
+   *  collection /run 호출 직전에 사용자 브라우저의 fresh 세션을 외부 API에 전달하기 위함. */
+  | { type: 'GET_LIVE_COOKIES'; host: string }
+  // ── Floating Overlay (우클릭 → API 스캔 진입점) ──
+  // SW → content: 페이지 위 플로팅 "녹화중" UI 표시/숨김.
+  // content → SW: 사용자가 overlay의 정지 버튼 누름.
+  | { type: 'SHOW_FLOATING_OVERLAY' }
+  | { type: 'HIDE_FLOATING_OVERLAY' }
+  | { type: 'STOP_FLOATING_CAPTURE' };
