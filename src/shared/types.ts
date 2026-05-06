@@ -219,6 +219,9 @@ export type ExtensionMessage =
   /** 특정 host의 현재 살아있는 쿠키를 SW에서 chrome.cookies API로 읽어 반환.
    *  collection /run 호출 직전에 사용자 브라우저의 fresh 세션을 외부 API에 전달하기 위함. */
   | { type: 'GET_LIVE_COOKIES'; host: string }
+  /** host 도메인에 매칭되는 인증 프로필의 service_id 조회. SessionResultPanel이 collection
+   *  등록 시 auth_profile_id를 같이 넘기기 위해 사용. SW의 autoMatchAuthProfile 재사용. */
+  | { type: 'LOOKUP_AUTH_PROFILE_FOR_HOST'; host: string }
   // ── Floating Overlay (우클릭 → API 스캔 진입점) ──
   // SW → content: 페이지 위 플로팅 "녹화중" UI 표시/숨김.
   // content → SW: 사용자가 overlay의 정지 버튼 누름.

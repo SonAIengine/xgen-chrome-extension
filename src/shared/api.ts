@@ -146,6 +146,8 @@ export interface FromTraceTool {
   templatedPath: string;
   pathParams: string[];
   queryParamKeys: string[];
+  /** 캡처 시 본 query 값 — 호출 시 default로 사용 (enum/설정 자동 채움). */
+  querySample?: Record<string, string>;
   requestBodySample?: unknown;
   responseSample?: unknown;
   label: string;

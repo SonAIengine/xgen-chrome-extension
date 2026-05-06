@@ -14,6 +14,10 @@ export interface AnalyzedTool {
   sampleCount: number;
   pathParams: string[];                         // ["id"]
   queryParamKeys: string[];                     // 관찰된 쿼리 키 합집합
+  /** 캡처 시 본 query 값 — 호출 시 default로 사용 (enum/설정 값 자동 채움). 같은 키가
+   *  여러 캡처에서 다른 값이면 첫 값만 보존. ID-like 동적 값도 같이 들어갈 수 있는데,
+   *  그땐 호출 시 사용자가 popup에서 override. */
+  querySample: Record<string, string>;
   requestBodySample?: unknown;                  // 첫 캡처 body (preview용)
   responseSample?: unknown;                     // 첫 캡처 response (preview용)
   label: string;                                // 사람이 읽는 한국어
@@ -520,9 +524,17 @@ export function analyzeTrace(captures: CapturedApi[]): TraceAnalysis {
       const { templatedPath, pathParams, members } = templatize(method, host, g);
       const toolId = `${method}:${host}${templatedPath}`;
       const queryKeys = new Set<string>();
+      const querySample: Record<string, string> = {};
       for (const m of members) {
         const u = tryParseUrl(m.url)!;
-        for (const key of u.searchParams.keys()) queryKeys.add(key);
+        for (const key of u.searchParams.keys()) {
+          queryKeys.add(key);
+          // 첫 본 값을 default로 보존 (이미 있으면 유지).
+          if (!(key in querySample)) {
+            const v = u.searchParams.get(key);
+            if (v !== null) querySample[key] = v;
+          }
+        }
       }
       const allEmpty = members.every((m) => isEmptyAck(m.responseBody));
       const first = members[0];
@@ -535,6 +547,7 @@ export function analyzeTrace(captures: CapturedApi[]): TraceAnalysis {
         sampleCount: members.length,
         pathParams,
         queryParamKeys: [...queryKeys],
+        querySample,
         requestBodySample: safeJsonParse(first.requestBody),
         responseSample: safeJsonParse(first.responseBody),
         label: describeTool(method, templatedPath),
@@ -554,6 +567,10 @@ export function analyzeTrace(captures: CapturedApi[]): TraceAnalysis {
       existing.sampleCount += t.sampleCount;
       existing.rawPaths.push(...t.rawPaths.slice(0, 3));
       existing.queryParamKeys = [...new Set([...existing.queryParamKeys, ...t.queryParamKeys])];
+      // querySample은 첫 본 값 우선 (existing이 먼저). 새로 추가된 키만 t에서 보충.
+      for (const [k, v] of Object.entries(t.querySample)) {
+        if (!(k in existing.querySample)) existing.querySample[k] = v;
+      }
       existing.isLowPriority = existing.isLowPriority && t.isLowPriority;
       // 첫 본 sample이 비어 있으면 두 번째 sample로 보강
       if (existing.requestBodySample == null && t.requestBodySample != null) {

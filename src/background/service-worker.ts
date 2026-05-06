@@ -362,6 +362,33 @@ chrome.runtime.onMessage.addListener(
         break;
       }
 
+      case 'LOOKUP_AUTH_PROFILE_FOR_HOST': {
+        // host에 대해 등록된 인증 프로필의 service_id 조회. autoMatchAuthProfile 재사용 —
+        // 같은 도메인 키워드 매칭 + 캡처된 로그인 fallback. 결과를 collection 등록 시
+        // auth_profile_id로 같이 넘겨 tool row까지 자동 propagate.
+        (async () => {
+          try {
+            const serverUrl = await resolveXgenServerUrl();
+            const authToken = serverUrl
+              ? (tokensByOrigin[serverUrl] || await getStoredToken(serverUrl))
+              : '';
+            if (!serverUrl || !authToken) {
+              sendResponse({ ok: false, error: 'no XGEN auth' });
+              return;
+            }
+            // autoMatchAuthProfile은 api_url 인자를 받음 — 도메인만 알면 충분하니 dummy URL.
+            const profileId = await autoMatchAuthProfile(
+              serverUrl, authToken, `https://${message.host}/`,
+            );
+            sendResponse({ ok: true, authProfileId: profileId || null });
+          } catch (err) {
+            console.warn('[XGEN SW] LOOKUP_AUTH_PROFILE_FOR_HOST failed:', err);
+            sendResponse({ ok: false, error: String(err) });
+          }
+        })();
+        return true;
+      }
+
       case 'GET_LIVE_COOKIES': {
         // 사용자 브라우저가 그 host에 대해 들고있는 fresh 쿠키를 모두 모아 Cookie 헤더 문자열로
         // 변환. 캡처 시점의 stale 쿠키 대신 호출 시점의 살아있는 세션 사용. host_permissions

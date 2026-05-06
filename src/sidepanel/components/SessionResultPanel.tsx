@@ -90,6 +90,23 @@ export function SessionResultPanel({ result, onDismiss }: Props) {
       const selectedEdges = analysis.edges.filter(
         (e) => selected.has(e.fromToolId) && selected.has(e.toToolId),
       );
+
+      // 캡처 도중 자동 등록된 인증 프로필을 collection 등록 시 같이 넘긴다 — 그래야
+      // 백엔드가 collection.auth_profile_id를 통해 모든 tool row에 자동 propagate.
+      // 이게 빠지면 collection은 만들어져도 tool들의 auth_profile_id가 비어 호출 시 401.
+      let authProfileId: string | undefined;
+      try {
+        const lookup = await chrome.runtime.sendMessage({
+          type: 'LOOKUP_AUTH_PROFILE_FOR_HOST',
+          host: analysis.primaryHost,
+        } satisfies ExtensionMessage);
+        if (lookup?.ok && typeof lookup.authProfileId === 'string') {
+          authProfileId = lookup.authProfileId;
+        }
+      } catch (err) {
+        console.warn('[SessionResultPanel] auth profile lookup failed:', err);
+      }
+
       const res = await createCollectionFromTrace(config.serverUrl, config.authToken, {
         host: analysis.primaryHost,
         tools: selectedTools.map((t) => ({
@@ -97,6 +114,7 @@ export function SessionResultPanel({ result, onDismiss }: Props) {
           templatedPath: t.templatedPath,
           pathParams: t.pathParams,
           queryParamKeys: t.queryParamKeys,
+          querySample: t.querySample,
           requestBodySample: t.requestBodySample,
           responseSample: t.responseSample,
           label: t.label,
@@ -108,6 +126,7 @@ export function SessionResultPanel({ result, onDismiss }: Props) {
           confidence: e.confidence,
           sampleSharedValue: e.sampleSharedValue,
         })),
+        ...(authProfileId ? { authProfileId } : {}),
       });
       if (res.status === 409) {
         setRegisterState({

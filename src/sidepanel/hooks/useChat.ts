@@ -642,9 +642,10 @@ export function useChat() {
    */
   function maybeAskForMissingArg(run: ActiveRun, errText: string | undefined): boolean {
     if (!errText) return false;
-    // 백엔드 tool_executor가 사전검증으로 보낸 메시지 — HTTP 에러 패턴 체크 전에 우선 잡음.
-    // "Missing path parameter(s): X" / "parameters:" / "parameter:" 모두 수용.
-    const missingPathMatch = errText.match(/Missing\s+path\s+parameter(?:s|\(s\))?:?\s*([^\s,)]+)/i);
+    // 백엔드 tool_executor가 사전검증/validation 정규화로 보낸 메시지를 잡음.
+    // 매치 패턴: "Missing path parameter(s): X" / "Missing parameter: X" / "Missing parameters: X"
+    // (path 단어는 옵셔널 — Spring validation 등 query param 누락도 같은 흐름)
+    const missingPathMatch = errText.match(/Missing\s+(?:path\s+)?parameter(?:s|\(s\))?:?\s*([^\s,)]+)/i);
     const isHttpError = /HTTP\s+(?:Error\s+)?\d{3}/i.test(errText);
     if (!missingPathMatch && !isHttpError) return false;
     if (pendingQuestionRef.current) return true;
